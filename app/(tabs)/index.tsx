@@ -1,42 +1,62 @@
-// app/index.tsx
-import { Redirect } from 'expo-router';
-import { useState, useEffect } from 'react';
-import { View, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
+import React from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-export default function Index() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+// Màn hình Home trong tab "(tabs)"
+export default function HomeScreen() {
+  const router = useRouter();
 
-  useEffect(() => {
-    checkLoginStatus();
-  }, []);
-
-  const checkLoginStatus = async () => {
+  const handleLogout = async () => {
     try {
-      const token = await AsyncStorage.getItem('user_token');
-      // Nếu có token -> đã đăng nhập
-      setIsLoggedIn(!!token); 
+      await AsyncStorage.removeItem('user_token');
+      router.replace('/login');
     } catch (e) {
-      console.log(e);
-    } finally {
-      setIsLoading(false);
+      console.log('Logout error', e);
     }
   };
 
-  if (isLoading) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111827' }}>
-        <ActivityIndicator size="large" color="#db2777" />
-      </View>
-    );
-  }
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Trang chủ</Text>
+      <Text style={styles.subtitle}>Chào mừng bạn đến với REVOLT 👋</Text>
 
-  // Nếu đã đăng nhập -> Vào thẳng tab Home
-  if (isLoggedIn) {
-    return <Redirect href="/(tabs)" />;
-  }
-
-  // Nếu chưa đăng nhập -> Vào trang Login
-  return <Redirect href="/login" />;
+      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <Text style={styles.logoutText}>Đăng xuất</Text>
+      </TouchableOpacity>
+    </View>
+  );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#111827',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: 'white',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#9ca3af',
+    textAlign: 'center',
+  },
+  logoutButton: {
+    marginTop: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#db2777',
+  },
+  logoutText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+});
