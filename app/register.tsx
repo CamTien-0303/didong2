@@ -1,13 +1,17 @@
 // app/register.tsx
-import React, { useState } from 'react';
-import { 
-  View, Text, TextInput, TouchableOpacity, StyleSheet, 
-  Alert, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView 
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient'; 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Eye, EyeOff, Zap, User, Mail, Lock, Check } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { Check, Eye, EyeOff, Lock, Mail, User, Utensils } from 'lucide-react-native';
+import React, { useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView, Platform, ScrollView,
+  StyleSheet,
+  Text, TextInput, TouchableOpacity,
+  View
+} from 'react-native';
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -102,10 +106,10 @@ export default function RegisterScreen() {
           {/* LOGO SECTION */}
           <View style={styles.logoContainer}>
             <View style={styles.logoCircle}>
-              <Zap color="#facc15" fill="#facc15" size={40} />
+              <Utensils color="#facc15" fill="#facc15" size={40} />
             </View>
-            <Text style={styles.appName}>REVOLT</Text>
-            <Text style={styles.appSlogan}>Street Style Revolution</Text>
+            <Text style={styles.appName}>Smart Order</Text>
+            <Text style={styles.appSlogan}>Hệ thống quản lý đặt món thông minh</Text>
           </View>
 
           {/* REGISTER FORM CARD */}
@@ -258,8 +262,9 @@ const styles = StyleSheet.create({
     borderWidth: 4, borderColor: 'white',
     shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5,
   },
-  appName: { fontSize: 28, fontWeight: 'bold', color: 'white', letterSpacing: 2 },
-  appSlogan: { color: 'rgba(255,255,255,0.9)', fontSize: 16 },
+  appName: { fontSize: 28, fontWeight: 'bold', color: 'white', textAlign: 'center', alignSelf: 'center', letterSpacing: 2 },
+  appSlogan: { color: 'rgba(255,255,255,0.9)', fontSize: 16, textAlign: 'center',
+  alignSelf: 'center',},
 
   // Card Styles (Glassmorphism)
   card: {

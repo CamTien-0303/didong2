@@ -1,13 +1,17 @@
 // app/login.tsx
-import React, { useState } from 'react';
-import { 
-  View, Text, TextInput, TouchableOpacity, StyleSheet, 
-  Alert, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView 
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient'; // Thư viện màu nền
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Eye, EyeOff, Zap, Check } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient'; // Thư viện màu nền
+import { useRouter } from 'expo-router';
+import { Check, Eye, EyeOff, Utensils } from 'lucide-react-native';
+import React, { useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView, Platform, ScrollView,
+  StyleSheet,
+  Text, TextInput, TouchableOpacity,
+  View
+} from 'react-native';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -17,13 +21,20 @@ export default function LoginScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
+  // Hàm delay helper
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
   const handleLogin = async () => {
-    // 1. Validate form
-    if (!email || !password) {
+    // 1. Làm sạch (trim) email và password
+    const trimmedEmail = email.trim();
+    const trimmedPassword = password.trim();
+
+    // 2. Validate form
+    if (!trimmedEmail || !trimmedPassword) {
       Alert.alert('Thông báo', 'Vui lòng điền đầy đủ thông tin');
       return;
     }
-    if (!email.includes('@')) {
+    if (!trimmedEmail.includes('@')) {
       Alert.alert('Lỗi', 'Email không hợp lệ');
       return;
     }
@@ -31,32 +42,34 @@ export default function LoginScreen() {
     setIsLoading(true);
 
     try {
-      // 2. Giả lập gọi API (delay 1 giây)
-      setTimeout(async () => {
-        // Lấy dữ liệu user đã đăng ký (dùng key 'temp_user_db' như ở bước Register trước)
-        const jsonValue = await AsyncStorage.getItem('temp_user_db');
-        const storedUser = jsonValue != null ? JSON.parse(jsonValue) : null;
+      // 3. Giả lập gọi API (delay 1 giây)
+      await delay(1000);
+
+      // Lấy dữ liệu user đã đăng ký (dùng key 'temp_user_db' như ở bước Register trước)
+      const jsonValue = await AsyncStorage.getItem('temp_user_db');
+      const storedUser = jsonValue != null ? JSON.parse(jsonValue) : null;
+      
+      // Logic kiểm tra đăng nhập
+      // Chấp nhận: User đã đăng ký HOẶC tài khoản Demo có sẵn
+      const isDemoUser = trimmedEmail === 'demo@revolt.com' && trimmedPassword === 'demo123';
+      const isRegisteredUser = storedUser && storedUser.email === trimmedEmail && storedUser.password === trimmedPassword;
+
+      if (isRegisteredUser || isDemoUser) {
+        // Lưu token đăng nhập
+        await AsyncStorage.setItem('user_token', 'token_vip_123');
         
-        // Logic kiểm tra đăng nhập
-        // Chấp nhận: User đã đăng ký HOẶC tài khoản Demo có sẵn
-        const isDemoUser = email === 'demo@revolt.com' && password === 'demo123';
-        const isRegisteredUser = storedUser && storedUser.email === email && storedUser.password === password;
+        Alert.alert('Thành công', 'Đăng nhập thành công!');
+        
+        // Chuyển vào màn hình chính (Sơ đồ bàn)
+        router.replace({
+          pathname: '/(tabs)',
+        });
+      } else {
+        Alert.alert('Thất bại', 'Email hoặc mật khẩu không đúng');
+      }
+      setIsLoading(false);
 
-        if (isRegisteredUser || isDemoUser) {
-          // Lưu token đăng nhập
-          await AsyncStorage.setItem('user_token', 'token_vip_123');
-          
-          Alert.alert('Thành công', 'Đăng nhập thành công!');
-          
-          // Chuyển vào màn hình chính
-          router.replace('/(tabs)');
-        } else {
-          Alert.alert('Thất bại', 'Email hoặc mật khẩu không đúng');
-        }
-        setIsLoading(false);
-      }, 1000);
-
-    } catch (e) {
+    } catch {
       setIsLoading(false);
       Alert.alert('Lỗi', 'Có lỗi xảy ra, vui lòng thử lại');
     }
@@ -77,10 +90,10 @@ export default function LoginScreen() {
           {/* LOGO SECTION */}
           <View style={styles.logoContainer}>
             <View style={styles.logoCircle}>
-              <Zap color="#facc15" fill="#facc15" size={40} />
+              <Utensils color="#facc15" fill="#facc15" size={40} />
             </View>
-            <Text style={styles.appName}>REVOLT</Text>
-            <Text style={styles.appSlogan}>Street Style Revolution</Text>
+            <Text style={styles.appName}>Smart Order</Text>
+            <Text style={styles.appSlogan}>Hệ thống quản lý đặt món thông minh</Text>
           </View>
 
           {/* LOGIN FORM CARD */}
@@ -197,8 +210,9 @@ const styles = StyleSheet.create({
     borderWidth: 4, borderColor: 'white',
     shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5,
   },
-  appName: { fontSize: 28, fontWeight: 'bold', color: 'white', letterSpacing: 2 },
-  appSlogan: { color: 'rgba(255,255,255,0.9)', fontSize: 16 },
+  appName: { fontSize: 28, fontWeight: 'bold', color: 'white', textAlign: 'center', alignSelf: 'center',letterSpacing: 2 },
+  appSlogan: { color: 'rgba(255,255,255,0.9)', fontSize: 16, textAlign: 'center',
+  alignSelf: 'center', }, 
 
   // Card Styles (Glassmorphism)
   card: {
