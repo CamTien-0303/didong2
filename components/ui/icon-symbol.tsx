@@ -21,6 +21,8 @@ const MAPPING = {
   'camera.fill': 'camera-alt',
   'sparkles': 'auto-awesome',
   'heart.fill': 'favorite',
+  'doc.text.fill': 'receipt',
+  'gearshape.fill': 'settings',
 } as IconMapping;
 
 /**

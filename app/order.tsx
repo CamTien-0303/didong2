@@ -1,21 +1,33 @@
+import { MenuItem, Order, OrderItem, OrderItemStatus, Table } from '@/types/order';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Check, Minus, Plus, Printer, Trash2, X } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import {
+  Alert,
+  FlatList,
+  Modal,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
-  FlatList,
-  Alert,
-  ScrollView,
+  View
 } from 'react-native';
-import { Check, X, Printer, Trash2, Plus, Minus } from 'lucide-react-native';
-import { Order, OrderItem, OrderItemStatus, Table, MenuItem } from '@/types/order';
 
 const ORDERS_KEY = 'orders';
 const TABLES_KEY = 'tables';
 const MENU_KEY = 'menu-items';
+
+const DEFAULT_MENU: MenuItem[] = [
+  { id: '1', name: 'Cà phê đen', price: 25000, category: 'Đồ uống', description: 'Cà phê đen đậm đà' },
+  { id: '2', name: 'Cà phê sữa', price: 30000, category: 'Đồ uống', description: 'Cà phê sữa thơm ngon' },
+  { id: '3', name: 'Bánh mì thịt', price: 35000, category: 'Đồ ăn', description: 'Bánh mì thịt nướng' },
+  { id: '4', name: 'Bánh mì pate', price: 30000, category: 'Đồ ăn', description: 'Bánh mì pate truyền thống' },
+  { id: '5', name: 'Phở bò', price: 80000, category: 'Đồ ăn', description: 'Phở bò Hà Nội' },
+  { id: '6', name: 'Bún chả', price: 70000, category: 'Đồ ăn', description: 'Bún chả Hà Nội' },
+  { id: '7', name: 'Nước cam', price: 40000, category: 'Đồ uống', description: 'Nước cam tươi' },
+  { id: '8', name: 'Trà đá', price: 10000, category: 'Đồ uống', description: 'Trà đá mát lạnh' },
+];
 
 export default function OrderDetailScreen() {
   const router = useRouter();
@@ -26,6 +38,8 @@ export default function OrderDetailScreen() {
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
   const [table, setTable] = useState<Table | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [menuModalVisible, setMenuModalVisible] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState('Tất cả');
 
   useEffect(() => {
     if (tableId) {
@@ -41,49 +55,49 @@ export default function OrderDetailScreen() {
 
   const loadData = async () => {
     try {
-      // Load table
+      // Load table trước để có table name
       const savedTables = await AsyncStorage.getItem(TABLES_KEY);
+      let foundTable: Table | null = null;
       if (savedTables) {
         const tables: Table[] = JSON.parse(savedTables);
-        const foundTable = tables.find((t) => t.id === tableId);
-        setTable(foundTable || null);
+        foundTable = tables.find((t) => t.id === tableId) || null;
+        setTable(foundTable);
       }
 
       // Load menu
       const savedMenu = await AsyncStorage.getItem(MENU_KEY);
       if (savedMenu) {
         setMenuItems(JSON.parse(savedMenu));
+      } else {
+        // Khởi tạo menu mặc định nếu chưa có
+        await AsyncStorage.setItem(MENU_KEY, JSON.stringify(DEFAULT_MENU));
+        setMenuItems(DEFAULT_MENU);
       }
 
       // Load or create order
       const savedOrders = await AsyncStorage.getItem(ORDERS_KEY);
-      if (savedOrders) {
-        const orders: Order[] = JSON.parse(savedOrders);
-        const foundOrder = orders.find((o) => o.tableId === tableId && !o.paidAt);
-        if (foundOrder) {
-          setCurrentOrder(foundOrder);
-        } else {
-          // Tạo order mới
-          const newOrder: Order = {
-            id: `order-${Date.now()}`,
-            tableId: tableId,
-            tableName: table?.name || `Bàn ${tableId}`,
-            items: [],
-            total: 0,
-            createdAt: Date.now(),
-          };
-          setCurrentOrder(newOrder);
-        }
+      const orders: Order[] = savedOrders ? JSON.parse(savedOrders) : [];
+      const foundOrder = orders.find((o) => o.tableId === tableId && !o.paidAt);
+      if (foundOrder) {
+        setCurrentOrder(foundOrder);
       } else {
         // Tạo order mới
+        const orderId = `order-${Date.now()}`;
+        const timestamp = Date.now();
         const newOrder: Order = {
-          id: `order-${Date.now()}`,
+          id: orderId,
+          orderCode: `#ORD-${timestamp.toString().slice(-4)}`,
           tableId: tableId,
-          tableName: table?.name || `Bàn ${tableId}`,
+          tableName: foundTable?.name || `Bàn ${tableId}`,
           items: [],
           total: 0,
-          createdAt: Date.now(),
+          createdAt: timestamp,
+          status: 'CHO_XAC_NHAN',
+          customerType: 'KHACH_LE',
         };
+        // Lưu order mới vào AsyncStorage ngay
+        orders.push(newOrder);
+        await AsyncStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
         setCurrentOrder(newOrder);
       }
     } catch (error) {
@@ -92,10 +106,30 @@ export default function OrderDetailScreen() {
   };
 
   const addMenuItemToOrder = async (menuItemId: string) => {
-    if (!currentOrder) return;
+    if (!currentOrder) {
+      Alert.alert('Lỗi', 'Không tìm thấy đơn hàng');
+      return;
+    }
 
-    const menuItem = menuItems.find((m) => m.id === menuItemId);
-    if (!menuItem) return;
+    // Đảm bảo menu items đã được load
+    let items = menuItems;
+    if (items.length === 0) {
+      const savedMenu = await AsyncStorage.getItem(MENU_KEY);
+      if (savedMenu) {
+        items = JSON.parse(savedMenu);
+        setMenuItems(items);
+      } else {
+        items = DEFAULT_MENU;
+        await AsyncStorage.setItem(MENU_KEY, JSON.stringify(DEFAULT_MENU));
+        setMenuItems(DEFAULT_MENU);
+      }
+    }
+
+    const menuItem = items.find((m) => m.id === menuItemId);
+    if (!menuItem) {
+      Alert.alert('Lỗi', 'Không tìm thấy món');
+      return;
+    }
 
     const existingItem = currentOrder.items.find(
       (item) => item.menuItemId === menuItemId && item.status === 'DANG_LAM'
@@ -203,9 +237,28 @@ export default function OrderDetailScreen() {
     ]);
   };
 
-  const sendToKitchen = async () => {
-    if (!currentOrder) return;
-    Alert.alert('Thành công', 'Đã gửi món xuống bếp');
+  const saveOrderToStorage = async () => {
+    if (!currentOrder) {
+      Alert.alert('Lỗi', 'Không tìm thấy đơn hàng');
+      return;
+    }
+
+    try {
+      // Đảm bảo đơn hàng được lưu với status đúng
+      // Nếu chưa có món, giữ status là CHO_XAC_NHAN
+      // Nếu đã có món, giữ nguyên status hiện tại
+      const updatedOrder: Order = {
+        ...currentOrder,
+        status: currentOrder.status || 'CHO_XAC_NHAN',
+      };
+      
+      await saveOrder(updatedOrder);
+      setCurrentOrder(updatedOrder);
+      Alert.alert('Thành công', 'Đã lưu đơn hàng. Đơn hàng đã được hiển thị trong danh sách đơn hàng.');
+    } catch (error) {
+      console.error('Lỗi save order:', error);
+      Alert.alert('Lỗi', 'Không thể lưu đơn hàng');
+    }
   };
 
   const printBill = () => {
@@ -270,7 +323,12 @@ export default function OrderDetailScreen() {
           <X size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Đơn hàng - {table.name}</Text>
-        <View style={{ width: 24 }} />
+        <TouchableOpacity
+          onPress={() => setMenuModalVisible(true)}
+          style={styles.addItemButton}
+        >
+          <Plus size={20} color="#10b981" />
+        </TouchableOpacity>
       </View>
 
       <FlatList
@@ -338,8 +396,8 @@ export default function OrderDetailScreen() {
         </View>
 
         <View style={styles.actionButtons}>
-          <TouchableOpacity style={styles.sendButton} onPress={sendToKitchen}>
-            <Text style={styles.sendButtonText}>Gửi xuống bếp</Text>
+          <TouchableOpacity style={styles.sendButton} onPress={saveOrderToStorage}>
+            <Text style={styles.sendButtonText}>Lưu đơn</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.printButton} onPress={printBill}>
             <Printer size={20} color="#fff" />
@@ -350,6 +408,86 @@ export default function OrderDetailScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Menu Modal */}
+      <Modal
+        visible={menuModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setMenuModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Chọn món</Text>
+              <TouchableOpacity onPress={() => setMenuModalVisible(false)}>
+                <X size={24} color="#fff" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Category Filter */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryContainer}>
+              {['Tất cả', 'Đồ uống', 'Đồ ăn'].map((category) => (
+                <TouchableOpacity
+                  key={category}
+                  style={[
+                    styles.categoryButton,
+                    selectedCategory === category && styles.categoryButtonActive
+                  ]}
+                  onPress={() => setSelectedCategory(category)}
+                >
+                  <Text style={[
+                    styles.categoryText,
+                    selectedCategory === category && styles.categoryTextActive
+                  ]}>
+                    {category}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Menu Items List */}
+            <FlatList
+              data={
+                selectedCategory === 'Tất cả'
+                  ? menuItems
+                  : menuItems.filter(item => item.category === selectedCategory)
+              }
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => {
+                    addMenuItemToOrder(item.id);
+                    setMenuModalVisible(false);
+                  }}
+                >
+                  <View style={styles.menuItemInfo}>
+                    <Text style={styles.menuItemName}>{item.name}</Text>
+                    {item.description && (
+                      <Text style={styles.menuItemDesc}>{item.description}</Text>
+                    )}
+                    <Text style={styles.menuItemPrice}>
+                      {item.price.toLocaleString('vi-VN')}₫
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.addMenuButton}
+                    onPress={() => {
+                      addMenuItemToOrder(item.id);
+                      setMenuModalVisible(false);
+                    }}
+                  >
+                    <Plus size={20} color="#fff" />
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              )}
+              style={styles.menuList}
+              contentContainerStyle={styles.menuListContent}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -371,6 +509,11 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#fff',
+  },
+  addItemButton: {
+    padding: 8,
+    backgroundColor: '#1f2937',
+    borderRadius: 8,
   },
   listContent: {
     padding: 20,
@@ -517,6 +660,100 @@ const styles = StyleSheet.create({
   emptyText: {
     color: '#9ca3af',
     fontSize: 18,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#111827',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+    paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#374151',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  categoryContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#374151',
+  },
+  categoryButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#1f2937',
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  categoryButtonActive: {
+    backgroundColor: '#10b981',
+    borderColor: '#10b981',
+  },
+  categoryText: {
+    color: '#9ca3af',
+    fontWeight: '600',
+  },
+  categoryTextActive: {
+    color: '#fff',
+  },
+  menuList: {
+    maxHeight: 500,
+  },
+  menuListContent: {
+    padding: 20,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#1f2937',
+    borderRadius: 12,
+    padding: 15,
+    marginBottom: 12,
+  },
+  menuItemInfo: {
+    flex: 1,
+  },
+  menuItemName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  menuItemDesc: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginBottom: 8,
+  },
+  menuItemPrice: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#10b981',
+  },
+  addMenuButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#10b981',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 15,
   },
 });
 

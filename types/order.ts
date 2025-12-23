@@ -4,6 +4,10 @@ export type TableStatus = 'TRONG' | 'CO_KHACH' | 'DA_DAT';
 
 export type OrderItemStatus = 'DANG_LAM' | 'DA_PHUC_VU';
 
+export type OrderStatus = 'CHO_XAC_NHAN' | 'DANG_LAM' | 'HOAN_TAT';
+
+export type CustomerType = 'KHACH_LE' | 'DAT_TRUOC' | 'VIP';
+
 export interface Table {
   id: string;
   name: string;
@@ -36,6 +40,7 @@ export interface OrderItem {
 
 export interface Order {
   id: string;
+  orderCode: string; // Mã đơn hàng như #ORD-0921
   tableId: string;
   tableName: string;
   items: OrderItem[];
@@ -43,5 +48,8 @@ export interface Order {
   createdAt: number;
   servedAt?: number;
   paidAt?: number;
+  status?: OrderStatus; // Trạng thái đơn hàng
+  customerType?: CustomerType; // Loại khách hàng
+  confirmedAt?: number; // Thời gian xác nhận đơn
 }
 

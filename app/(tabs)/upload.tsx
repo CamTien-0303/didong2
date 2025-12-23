@@ -1,6 +1,6 @@
 import { MenuItem } from '@/types/order';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Plus, Tag, TrendingUp } from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
 import {
@@ -30,6 +30,8 @@ const CATEGORIES = ['Tất cả', 'Đồ uống', 'Đồ ăn'];
 
 export default function MenuScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const tableId = params.tableId as string;
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('Tất cả');
 
@@ -61,22 +63,88 @@ export default function MenuScreen() {
   const bestSellers = menuItems.filter((_, i) => i < 3);
   const onSaleItems = menuItems.filter((_, i) => i >= 3 && i < 5);
 
-  const addToOrder = (item: MenuItem) => {
-    // Hiển thị dialog chọn bàn hoặc lấy từ state
-    Alert.alert(
-      'Chọn bàn',
-      'Vui lòng chọn bàn để thêm món',
-      [
-        { text: 'Hủy', style: 'cancel' },
-        {
-          text: 'Chọn bàn',
-          onPress: () => {
-            // Navigate đến màn hình sơ đồ bàn để chọn
-            router.push('/(tabs)');
+  const addToOrder = async (item: MenuItem) => {
+    if (tableId) {
+      // Nếu có tableId từ params, thêm món trực tiếp vào đơn
+      try {
+        const ORDERS_KEY = 'orders';
+        const savedOrders = await AsyncStorage.getItem(ORDERS_KEY);
+        const orders: any[] = savedOrders ? JSON.parse(savedOrders) : [];
+        
+        // Tìm order của bàn này
+        let order = orders.find((o: any) => o.tableId === tableId && !o.paidAt);
+        
+        if (!order) {
+          // Tạo order mới nếu chưa có
+          const TABLES_KEY = 'tables';
+          const savedTables = await AsyncStorage.getItem(TABLES_KEY);
+          const tables: any[] = savedTables ? JSON.parse(savedTables) : [];
+          const table = tables.find((t: any) => t.id === tableId);
+          
+          order = {
+            id: `order-${Date.now()}`,
+            orderCode: `#ORD-${Date.now().toString().slice(-4)}`,
+            tableId: tableId,
+            tableName: table?.name || `Bàn ${tableId}`,
+            items: [],
+            total: 0,
+            createdAt: Date.now(),
+            status: 'CHO_XAC_NHAN',
+            customerType: 'KHACH_LE',
+          };
+        }
+        
+        // Thêm món vào order
+        const existingItem = order.items.find((i: any) => i.menuItemId === item.id && i.status === 'DANG_LAM');
+        
+        if (existingItem) {
+          existingItem.quantity += 1;
+        } else {
+          order.items.push({
+            id: `item-${Date.now()}`,
+            menuItemId: item.id,
+            menuItemName: item.name,
+            quantity: 1,
+            price: item.price,
+            status: 'DANG_LAM',
+          });
+        }
+        
+        // Tính lại tổng
+        order.total = order.items.reduce((sum: number, i: any) => sum + i.price * i.quantity, 0);
+        
+        // Lưu lại
+        const orderIndex = orders.findIndex((o: any) => o.id === order.id);
+        if (orderIndex >= 0) {
+          orders[orderIndex] = order;
+        } else {
+          orders.push(order);
+        }
+        
+        await AsyncStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
+        Alert.alert('Thành công', `Đã thêm ${item.name} vào đơn hàng`);
+        
+        // Quay lại màn hình order
+        router.back();
+      } catch (error) {
+        Alert.alert('Lỗi', 'Không thể thêm món vào đơn');
+      }
+    } else {
+      // Nếu không có tableId, hiển thị dialog chọn bàn
+      Alert.alert(
+        'Chọn bàn',
+        'Vui lòng chọn bàn để thêm món',
+        [
+          { text: 'Hủy', style: 'cancel' },
+          {
+            text: 'Chọn bàn',
+            onPress: () => {
+              router.push('/(tabs)');
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    }
   };
 
   const renderMenuItem = ({ item }: { item: MenuItem }) => {
