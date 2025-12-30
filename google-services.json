@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "130691733256",
+    "project_id": "smartorder-c8be1",
+    "storage_bucket": "smartorder-c8be1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:130691733256:android:9beed402ee86ea83107ebd",
+        "android_client_info": {
+          "package_name": "com.tien.smartorder"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCjh5zZ5Ng5X5DvkvFVkfKabUTo26bM4UU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
