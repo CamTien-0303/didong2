@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.phong.smartorder"
+      "bundleIdentifier": "com.tien.smartorder"
     },
     "android": {
       "package": "com.tien.smartorder",
@@ -19,7 +19,6 @@
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
-        
       },
       "googleServicesFile": "./google-services.json",
       "edgeToEdgeEnabled": true,
@@ -49,7 +48,8 @@
           "photosPermission": "Ứng dụng cần quyền truy cập ảnh của bạn để lưu quần áo vào tủ.",
           "cameraPermission": "Ứng dụng cần quyền truy cập camera để chụp ảnh quần áo."
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

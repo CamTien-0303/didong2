@@ -1,9 +1,20 @@
-import { MenuItem, Order, OrderItem, OrderItemStatus, Table } from '@/types/order';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getAllCategories } from '@/services/categoryService';
+import { subscribeToMenu } from '@/services/menuService';
+import {
+  addOrderItem,
+  completeOrder,
+  createOrder,
+  getOrderByTable,
+  removeOrderItem,
+  subscribeToTableOrders,
+  updateOrderItem
+} from '@/services/orderService';
+import { updateTableStatus } from '@/services/tableService';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Check, Minus, Plus, Printer, Trash2, X } from 'lucide-react-native';
+import { Minus, Plus, Printer, Trash2, X } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Modal,
@@ -14,208 +25,141 @@ import {
   View
 } from 'react-native';
 
-const ORDERS_KEY = 'orders';
-const TABLES_KEY = 'tables';
-const MENU_KEY = 'menu-items';
+// Types mapping for this screen
+type OrderItem = {
+  id: string; // This is actually menuId in our new structure, or we map it
+  menuId: string;
+  menuItemName: string; // mapped from name
+  quantity: number;
+  price: number;
+  status?: string;
+  note?: string;
+};
 
-const DEFAULT_MENU: MenuItem[] = [
-  { id: '1', name: 'Cà phê đen', price: 25000, category: 'Đồ uống', description: 'Cà phê đen đậm đà' },
-  { id: '2', name: 'Cà phê sữa', price: 30000, category: 'Đồ uống', description: 'Cà phê sữa thơm ngon' },
-  { id: '3', name: 'Bánh mì thịt', price: 35000, category: 'Đồ ăn', description: 'Bánh mì thịt nướng' },
-  { id: '4', name: 'Bánh mì pate', price: 30000, category: 'Đồ ăn', description: 'Bánh mì pate truyền thống' },
-  { id: '5', name: 'Phở bò', price: 80000, category: 'Đồ ăn', description: 'Phở bò Hà Nội' },
-  { id: '6', name: 'Bún chả', price: 70000, category: 'Đồ ăn', description: 'Bún chả Hà Nội' },
-  { id: '7', name: 'Nước cam', price: 40000, category: 'Đồ uống', description: 'Nước cam tươi' },
-  { id: '8', name: 'Trà đá', price: 10000, category: 'Đồ uống', description: 'Trà đá mát lạnh' },
-];
+type Order = {
+  id: string;
+  tableId: string;
+  tableName?: string;
+  items: OrderItem[];
+  total: number;
+  status: string;
+};
 
 export default function OrderDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const tableId = params.tableId as string;
-  const addItemId = params.addItem as string;
+  const tableId = Array.isArray(params.tableId) ? params.tableId[0] : params.tableId;
+  const tableNumber = params.tableNumber;
+  const guests = params.guests;
 
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
-  const [table, setTable] = useState<Table | null>(null);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [menuItems, setMenuItems] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
   const [menuModalVisible, setMenuModalVisible] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('Tất cả');
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (tableId) {
-      loadData();
-    }
+    let unsubMenu: (() => void) | undefined;
+    let unsubOrder: (() => void) | undefined;
+
+    const setupData = async () => {
+      if (!tableId) return;
+
+      // 1. Subscribe to Menu
+      unsubMenu = subscribeToMenu((result) => {
+        if (result.success) {
+          setMenuItems(result.items);
+        }
+      });
+
+      // 2. Load Categories
+      const catResult = await getAllCategories();
+      if (catResult.success) {
+        setCategories(catResult.categories);
+      }
+
+      // 3. Initialize/Subscribe Order
+      await ensureOrderExists();
+
+      unsubOrder = subscribeToTableOrders(tableId, (result) => {
+        setIsLoading(false);
+        if (result.success) {
+          if (result.order) {
+            mapOrderToState(result.order);
+          } else {
+            setCurrentOrder(null);
+          }
+        } else {
+          console.error('Order subscription error:', result.error);
+          Alert.alert('Lỗi kết nối', 'Không thể tải đơn hàng: ' + result.error);
+        }
+      });
+    };
+
+    setupData();
+
+    return () => {
+      if (unsubMenu) unsubMenu();
+      if (unsubOrder) unsubOrder();
+    };
   }, [tableId]);
 
-  useEffect(() => {
-    if (addItemId && currentOrder) {
-      addMenuItemToOrder(addItemId);
-    }
-  }, [addItemId]);
+  const ensureOrderExists = async () => {
+    // Check if valid order exists
+    const { success, order } = await getOrderByTable(tableId!);
 
-  const loadData = async () => {
-    try {
-      // Load table trước để có table name
-      const savedTables = await AsyncStorage.getItem(TABLES_KEY);
-      let foundTable: Table | null = null;
-      if (savedTables) {
-        const tables: Table[] = JSON.parse(savedTables);
-        foundTable = tables.find((t) => t.id === tableId) || null;
-        setTable(foundTable);
-      }
-
-      // Load menu
-      const savedMenu = await AsyncStorage.getItem(MENU_KEY);
-      if (savedMenu) {
-        setMenuItems(JSON.parse(savedMenu));
-      } else {
-        // Khởi tạo menu mặc định nếu chưa có
-        await AsyncStorage.setItem(MENU_KEY, JSON.stringify(DEFAULT_MENU));
-        setMenuItems(DEFAULT_MENU);
-      }
-
-      // Load or create order
-      const savedOrders = await AsyncStorage.getItem(ORDERS_KEY);
-      const orders: Order[] = savedOrders ? JSON.parse(savedOrders) : [];
-      const foundOrder = orders.find((o) => o.tableId === tableId && !o.paidAt);
-      if (foundOrder) {
-        setCurrentOrder(foundOrder);
-      } else {
-        // Tạo order mới
-        const orderId = `order-${Date.now()}`;
-        const timestamp = Date.now();
-        const newOrder: Order = {
-          id: orderId,
-          orderCode: `#ORD-${timestamp.toString().slice(-4)}`,
-          tableId: tableId,
-          tableName: foundTable?.name || `Bàn ${tableId}`,
-          items: [],
-          total: 0,
-          createdAt: timestamp,
-          status: 'CHO_XAC_NHAN',
-          customerType: 'KHACH_LE',
-        };
-        // Lưu order mới vào AsyncStorage ngay
-        orders.push(newOrder);
-        await AsyncStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
-        setCurrentOrder(newOrder);
-      }
-    } catch (error) {
-      console.error('Lỗi load data:', error);
-    }
-  };
-
-  const addMenuItemToOrder = async (menuItemId: string) => {
-    if (!currentOrder) {
-      Alert.alert('Lỗi', 'Không tìm thấy đơn hàng');
-      return;
-    }
-
-    // Đảm bảo menu items đã được load
-    let items = menuItems;
-    if (items.length === 0) {
-      const savedMenu = await AsyncStorage.getItem(MENU_KEY);
-      if (savedMenu) {
-        items = JSON.parse(savedMenu);
-        setMenuItems(items);
-      } else {
-        items = DEFAULT_MENU;
-        await AsyncStorage.setItem(MENU_KEY, JSON.stringify(DEFAULT_MENU));
-        setMenuItems(DEFAULT_MENU);
-      }
-    }
-
-    const menuItem = items.find((m) => m.id === menuItemId);
-    if (!menuItem) {
-      Alert.alert('Lỗi', 'Không tìm thấy món');
-      return;
-    }
-
-    const existingItem = currentOrder.items.find(
-      (item) => item.menuItemId === menuItemId && item.status === 'DANG_LAM'
-    );
-
-    let updatedItems: OrderItem[];
-    if (existingItem) {
-      updatedItems = currentOrder.items.map((item) =>
-        item.id === existingItem.id
-          ? { ...item, quantity: item.quantity + 1 }
-          : item
+    if (!success || !order) {
+      // Create new if not exists
+      await createOrder(
+        tableId!,
+        parseInt(String(tableNumber || '0')),
+        parseInt(String(guests || '0'))
       );
-    } else {
-      const newOrderItem: OrderItem = {
-        id: `item-${Date.now()}`,
-        menuItemId: menuItem.id,
-        menuItemName: menuItem.name,
-        quantity: 1,
-        price: menuItem.price,
-        status: 'DANG_LAM',
-      };
-      updatedItems = [...currentOrder.items, newOrderItem];
-    }
-
-    const updatedOrder: Order = {
-      ...currentOrder,
-      items: updatedItems,
-      total: updatedItems.reduce((sum, item) => sum + item.price * item.quantity, 0),
-    };
-
-    await saveOrder(updatedOrder);
-    setCurrentOrder(updatedOrder);
-  };
-
-  const updateQuantity = async (itemId: string, delta: number) => {
-    if (!currentOrder) return;
-
-    const updatedItems = currentOrder.items
-      .map((item) =>
-        item.id === itemId ? { ...item, quantity: Math.max(1, item.quantity + delta) } : item
-      )
-      .filter((item) => item.quantity > 0);
-
-    const updatedOrder: Order = {
-      ...currentOrder,
-      items: updatedItems,
-      total: updatedItems.reduce((sum, item) => sum + item.price * item.quantity, 0),
-    };
-
-    await saveOrder(updatedOrder);
-    setCurrentOrder(updatedOrder);
-  };
-
-  const saveOrder = async (order: Order) => {
-    try {
-      const savedOrders = await AsyncStorage.getItem(ORDERS_KEY);
-      const orders: Order[] = savedOrders ? JSON.parse(savedOrders) : [];
-      const existingIndex = orders.findIndex((o) => o.id === order.id);
-      if (existingIndex >= 0) {
-        orders[existingIndex] = order;
-      } else {
-        orders.push(order);
-      }
-      await AsyncStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
-    } catch (error) {
-      console.error('Lỗi save order:', error);
     }
   };
 
-  const updateItemStatus = async (itemId: string, status: OrderItemStatus) => {
-    if (!currentOrder) return;
+  const mapOrderToState = (firestoreOrder: any) => {
+    // Map Firestore order structure to local state structure if needed
+    // Our local structure expects: items with menuItemName
+    const mappedItems = firestoreOrder.items.map((item: any) => ({
+      id: item.menuId, // use menuId as id for list key
+      menuId: item.menuId,
+      menuItemName: item.name,
+      quantity: item.quantity,
+      price: item.price,
+      status: item.status || 'DANG_LAM',
+      note: item.note
+    }));
 
-    const updatedItems = currentOrder.items.map((item) =>
-      item.id === itemId ? { ...item, status } : item
-    );
-
-    const updatedOrder: Order = {
-      ...currentOrder,
-      items: updatedItems,
-    };
-
-    await saveOrder(updatedOrder);
-    setCurrentOrder(updatedOrder);
+    setCurrentOrder({
+      id: firestoreOrder.id,
+      tableId: firestoreOrder.tableId,
+      tableName: `Bàn ${firestoreOrder.tableNumber}`,
+      items: mappedItems,
+      total: firestoreOrder.totalAmount,
+      status: firestoreOrder.status
+    });
   };
 
-  const cancelItem = async (itemId: string) => {
+  const handleAddMenuItem = async (menuItem: any) => {
+    if (!currentOrder) return;
+
+    const result = await addOrderItem(currentOrder.id, menuItem, 1);
+
+    if (!result.success) {
+      Alert.alert('Lỗi', 'Không thể thêm món: ' + result.error);
+    }
+  };
+
+  const handleUpdateQuantity = async (menuId: string, itemQuantity: number, delta: number) => {
+    if (!currentOrder) return;
+
+    const newQuantity = itemQuantity + delta;
+    await updateOrderItem(currentOrder.id, menuId, newQuantity);
+  };
+
+  const handleCancelItem = async (menuId: string) => {
     if (!currentOrder) return;
 
     Alert.alert('Xác nhận hủy', 'Bạn có chắc muốn hủy món này?', [
@@ -224,41 +168,36 @@ export default function OrderDetailScreen() {
         text: 'Xác nhận',
         style: 'destructive',
         onPress: async () => {
-          const updatedItems = currentOrder.items.filter((item) => item.id !== itemId);
-          const updatedOrder: Order = {
-            ...currentOrder,
-            items: updatedItems,
-            total: updatedItems.reduce((sum, item) => sum + item.price * item.quantity, 0),
-          };
-          await saveOrder(updatedOrder);
-          setCurrentOrder(updatedOrder);
+          await removeOrderItem(currentOrder.id, menuId);
         },
       },
     ]);
   };
 
-  const saveOrderToStorage = async () => {
-    if (!currentOrder) {
-      Alert.alert('Lỗi', 'Không tìm thấy đơn hàng');
-      return;
-    }
+  const handleCloseTable = async () => {
+    if (!currentOrder) return;
 
-    try {
-      // Đảm bảo đơn hàng được lưu với status đúng
-      // Nếu chưa có món, giữ status là CHO_XAC_NHAN
-      // Nếu đã có món, giữ nguyên status hiện tại
-      const updatedOrder: Order = {
-        ...currentOrder,
-        status: currentOrder.status || 'CHO_XAC_NHAN',
-      };
-      
-      await saveOrder(updatedOrder);
-      setCurrentOrder(updatedOrder);
-      Alert.alert('Thành công', 'Đã lưu đơn hàng. Đơn hàng đã được hiển thị trong danh sách đơn hàng.');
-    } catch (error) {
-      console.error('Lỗi save order:', error);
-      Alert.alert('Lỗi', 'Không thể lưu đơn hàng');
-    }
+    Alert.alert('Đóng bàn', `Xác nhận đóng bàn và thanh toán?`, [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Xác nhận',
+        onPress: async () => {
+          try {
+            const result = await completeOrder(currentOrder.id);
+            if (result.success) {
+              // Update table status to TRONG
+              await updateTableStatus(tableId!, 'TRONG');
+              Alert.alert('Thành công', 'Đã đóng bàn');
+              router.back();
+            } else {
+              Alert.alert('Lỗi', 'Không thể đóng bàn: ' + result.error);
+            }
+          } catch (error) {
+            Alert.alert('Lỗi', 'Đã có lỗi xảy ra');
+          }
+        },
+      },
+    ]);
   };
 
   const printBill = () => {
@@ -266,41 +205,7 @@ export default function OrderDetailScreen() {
     Alert.alert('In tạm tính', `Tổng tiền: ${currentOrder.total.toLocaleString('vi-VN')}₫`);
   };
 
-  const closeTable = async () => {
-    if (!currentOrder || !table) return;
-
-    Alert.alert('Đóng bàn', `Xác nhận đóng bàn ${table.name}?`, [
-      { text: 'Hủy', style: 'cancel' },
-      {
-        text: 'Xác nhận',
-        onPress: async () => {
-          try {
-            const updatedOrder: Order = {
-              ...currentOrder,
-              paidAt: Date.now(),
-            };
-            await saveOrder(updatedOrder);
-
-            const savedTables = await AsyncStorage.getItem(TABLES_KEY);
-            if (savedTables) {
-              const tables: Table[] = JSON.parse(savedTables);
-              const updatedTables = tables.map((t) =>
-                t.id === tableId ? { ...t, status: 'TRONG' as const, currentOrderId: undefined } : t
-              );
-              await AsyncStorage.setItem(TABLES_KEY, JSON.stringify(updatedTables));
-            }
-
-            Alert.alert('Thành công', 'Đã đóng bàn');
-            router.back();
-          } catch (error) {
-            Alert.alert('Lỗi', 'Không thể đóng bàn');
-          }
-        },
-      },
-    ]);
-  };
-
-  if (!tableId || !table) {
+  if (!tableId) {
     return (
       <View style={styles.container}>
         <Text style={styles.emptyText}>Vui lòng chọn bàn</Text>
@@ -308,10 +213,11 @@ export default function OrderDetailScreen() {
     );
   }
 
-  if (!currentOrder) {
+  if (isLoading || !currentOrder) {
     return (
       <View style={styles.container}>
-        <Text style={styles.emptyText}>Đang tải...</Text>
+        <ActivityIndicator size="large" color="#10b981" />
+        <Text style={styles.emptyText}>Đang tải đơn hàng...</Text>
       </View>
     );
   }
@@ -322,7 +228,7 @@ export default function OrderDetailScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <X size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Đơn hàng - {table.name}</Text>
+        <Text style={styles.headerTitle}>Đơn hàng - {currentOrder.tableName}</Text>
         <TouchableOpacity
           onPress={() => setMenuModalVisible(true)}
           style={styles.addItemButton}
@@ -333,7 +239,7 @@ export default function OrderDetailScreen() {
 
       <FlatList
         data={currentOrder.items}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.menuId}
         renderItem={({ item }) => (
           <View style={styles.orderItem}>
             <View style={styles.itemInfo}>
@@ -341,14 +247,14 @@ export default function OrderDetailScreen() {
               <View style={styles.quantityRow}>
                 <TouchableOpacity
                   style={styles.quantityButton}
-                  onPress={() => updateQuantity(item.id, -1)}
+                  onPress={() => handleUpdateQuantity(item.menuId, item.quantity, -1)}
                 >
                   <Minus size={16} color="#fff" />
                 </TouchableOpacity>
                 <Text style={styles.quantityText}>x{item.quantity}</Text>
                 <TouchableOpacity
                   style={styles.quantityButton}
-                  onPress={() => updateQuantity(item.id, 1)}
+                  onPress={() => handleUpdateQuantity(item.menuId, item.quantity, 1)}
                 >
                   <Plus size={16} color="#fff" />
                 </TouchableOpacity>
@@ -359,21 +265,10 @@ export default function OrderDetailScreen() {
             </View>
 
             <View style={styles.itemActions}>
-              {item.status === 'DANG_LAM' && (
-                <TouchableOpacity
-                  style={styles.statusButton}
-                  onPress={() => updateItemStatus(item.id, 'DA_PHUC_VU')}
-                >
-                  <Check size={16} color="#10b981" />
-                  <Text style={styles.statusText}>Đã phục vụ</Text>
-                </TouchableOpacity>
-              )}
-              {item.status === 'DA_PHUC_VU' && (
-                <View style={[styles.statusBadge, { backgroundColor: '#d1fae5' }]}>
-                  <Text style={[styles.statusText, { color: '#10b981' }]}>Đã phục vụ</Text>
-                </View>
-              )}
-              <TouchableOpacity style={styles.cancelButton} onPress={() => cancelItem(item.id)}>
+              <View style={[styles.statusBadge, { backgroundColor: '#d1fae5' }]}>
+                <Text style={[styles.statusText, { color: '#10b981' }]}>Đang phục vụ</Text>
+              </View>
+              <TouchableOpacity style={styles.cancelButton} onPress={() => handleCancelItem(item.menuId)}>
                 <Trash2 size={16} color="#ef4444" />
               </TouchableOpacity>
             </View>
@@ -396,15 +291,12 @@ export default function OrderDetailScreen() {
         </View>
 
         <View style={styles.actionButtons}>
-          <TouchableOpacity style={styles.sendButton} onPress={saveOrderToStorage}>
-            <Text style={styles.sendButtonText}>Lưu đơn</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={styles.printButton} onPress={printBill}>
             <Printer size={20} color="#fff" />
             <Text style={styles.printButtonText}>In tạm tính</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.closeButton} onPress={closeTable}>
-            <Text style={styles.closeButtonText}>Đóng bàn</Text>
+          <TouchableOpacity style={styles.closeButton} onPress={handleCloseTable}>
+            <Text style={styles.closeButtonText}>Thanh toán & Đóng bàn</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -419,7 +311,7 @@ export default function OrderDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Chọn món</Text>
+              <Text style={styles.modalTitle}>Thêm món</Text>
               <TouchableOpacity onPress={() => setMenuModalVisible(false)}>
                 <X size={24} color="#fff" />
               </TouchableOpacity>
@@ -427,20 +319,35 @@ export default function OrderDetailScreen() {
 
             {/* Category Filter */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryContainer}>
-              {['Tất cả', 'Đồ uống', 'Đồ ăn'].map((category) => (
+              <TouchableOpacity
+                style={[
+                  styles.categoryButton,
+                  selectedCategory === 'Tất cả' && styles.categoryButtonActive
+                ]}
+                onPress={() => setSelectedCategory('Tất cả')}
+              >
+                <Text style={[
+                  styles.categoryText,
+                  selectedCategory === 'Tất cả' && styles.categoryTextActive
+                ]}>
+                  Tất cả
+                </Text>
+              </TouchableOpacity>
+
+              {categories.map((category) => (
                 <TouchableOpacity
-                  key={category}
+                  key={category.id}
                   style={[
                     styles.categoryButton,
-                    selectedCategory === category && styles.categoryButtonActive
+                    selectedCategory === category.id && styles.categoryButtonActive
                   ]}
-                  onPress={() => setSelectedCategory(category)}
+                  onPress={() => setSelectedCategory(category.id)}
                 >
                   <Text style={[
                     styles.categoryText,
-                    selectedCategory === category && styles.categoryTextActive
+                    selectedCategory === category.id && styles.categoryTextActive
                   ]}>
-                    {category}
+                    {category.name}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -458,7 +365,7 @@ export default function OrderDetailScreen() {
                 <TouchableOpacity
                   style={styles.menuItem}
                   onPress={() => {
-                    addMenuItemToOrder(item.id);
+                    handleAddMenuItem(item);
                     setMenuModalVisible(false);
                   }}
                 >
@@ -474,7 +381,7 @@ export default function OrderDetailScreen() {
                   <TouchableOpacity
                     style={styles.addMenuButton}
                     onPress={() => {
-                      addMenuItemToOrder(item.id);
+                      handleAddMenuItem(item);
                       setMenuModalVisible(false);
                     }}
                   >
@@ -567,15 +474,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  statusButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ecfdf5',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    gap: 6,
-  },
   statusBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -616,17 +514,6 @@ const styles = StyleSheet.create({
   },
   actionButtons: {
     gap: 10,
-  },
-  sendButton: {
-    backgroundColor: '#3b82f6',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  sendButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
   },
   printButton: {
     backgroundColor: '#6b7280',
@@ -756,4 +643,3 @@ const styles = StyleSheet.create({
     marginLeft: 15,
   },
 });
-

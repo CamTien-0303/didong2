@@ -1,5 +1,6 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { auth } from '@/services/firebaseConfig';
 import { Redirect, Tabs, useRouter } from 'expo-router';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
@@ -11,33 +12,27 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const router = useRouter();
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const token = await AsyncStorage.getItem('user_token');
-        if (!token) {
-          setIsAuthenticated(false);
-        } else {
-          setIsAuthenticated(true);
-        }
-      } catch (error) {
-        setIsAuthenticated(false);
-      }
-    };
-    checkAuth();
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  if (isAuthenticated === null) {
+  if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111827' }}>
-        <ActivityIndicator size="large" color="#db2777" />
+        <ActivityIndicator size="large" color="#FDB022" />
       </View>
     );
   }
 
-  if (!isAuthenticated) {
+  if (!user) {
     return <Redirect href="/login" />;
   }
 
@@ -56,7 +51,7 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="upload"
+        name="menu"
         options={{
           title: 'Menu',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="sparkles" color={color} />,

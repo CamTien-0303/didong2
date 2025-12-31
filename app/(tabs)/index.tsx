@@ -1,282 +1,515 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import { auth } from '@/services/firebaseConfig';
 import {
+  initializeTables,
+  subscribeToTables
+} from '@/services/tableService';
+import { useRouter } from 'expo-router';
+import { onAuthStateChanged } from 'firebase/auth';
+import { Bell, Clock, DollarSign, RefreshCw, Users, X } from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  FlatList,
+  Modal,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
-  FlatList,
-  ScrollView,
-  TextInput,
-  Alert,
 } from 'react-native';
-import { Bell, Menu, Plus, Search, Clock, Users, LogOut } from 'lucide-react-native';
-import { Table, TableStatus } from '@/types/order';
 
-const STORAGE_KEY = 'tables';
-const ORDERS_KEY = 'orders';
+const { width } = Dimensions.get('window');
 
-export default function TablePlanScreen() {
+type TableStatus = 'TRONG' | 'CO_KHACH' | 'CHO_MON';
+
+type Area = {
+  id: string;
+  name: string;
+  totalTables: number;
+};
+
+type Table = {
+  id: string;
+  number: number;
+  area: string;
+  status: TableStatus;
+  guests?: number;
+  capacity: number;
+  duration?: number;
+  totalAmount?: number;
+  startTime?: any;
+};
+
+const AREAS: Area[] = [
+  { id: 'tang1', name: 'Tầng 1', totalTables: 12 },
+  { id: 'tang2', name: 'Tầng 2', totalTables: 8 },
+  { id: 'sanvuon', name: 'Sân vườn', totalTables: 6 },
+  { id: 'vip', name: 'VIP', totalTables: 4 },
+];
+
+export default function TableMapScreen() {
   const router = useRouter();
   const [tables, setTables] = useState<Table[]>([]);
-  const [selectedFilter, setSelectedFilter] = useState<'ALL' | 'TRONG' | 'CO_KHACH' | 'DA_DAT'>('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedArea, setSelectedArea] = useState('tang1');
+  const [selectedTable, setSelectedTable] = useState<Table | null>(null);
+  const [userName, setUserName] = useState('Nhân viên');
+  const [isConnected, setIsConnected] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [showGuestModal, setShowGuestModal] = useState(false);
+  const [guestCount, setGuestCount] = useState('4');
 
-  useFocusEffect(
-    useCallback(() => {
-      // Kiểm tra authentication mỗi khi vào màn hình
-      const checkAuthAndLoad = async () => {
-        try {
-          const token = await AsyncStorage.getItem('user_token');
-          if (!token) {
-            router.replace('/login');
-            return;
-          }
-          // Nếu đã đăng nhập thì load dữ liệu
-          await loadTables();
-        } catch (error) {
-          router.replace('/login');
-        }
-      };
-      checkAuthAndLoad();
-    }, [router])
-  );
+  useEffect(() => {
+    getUserInfo();
+    setupFirestoreListener();
+  }, []);
 
-  const loadTables = async () => {
-    try {
-      const savedTables = await AsyncStorage.getItem(STORAGE_KEY);
-      if (savedTables) {
-        setTables(JSON.parse(savedTables));
-      } else {
-        // Tạo dữ liệu mẫu
-        const defaultTables: Table[] = Array.from({ length: 8 }, (_, i) => ({
-          id: `table-${i + 1}`,
-          name: `Bàn ${String(i + 1).padStart(2, '0')}`,
-          status: i < 2 ? 'CO_KHACH' : i === 4 ? 'DA_DAT' : 'TRONG',
-          capacity: [4, 4, 2, 6, 4, 10][i] || 4,
-          createdAt: Date.now(),
-        }));
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(defaultTables));
-        setTables(defaultTables);
+  const getUserInfo = () => {
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserName(user.displayName || user.email?.split('@')[0] || 'Nhân viên');
       }
-    } catch (error) {
-      console.error('Lỗi load bàn:', error);
-    }
+    });
   };
 
-  const openTable = async (tableId: string) => {
-    try {
-      const updated = tables.map((t) =>
-        t.id === tableId ? { ...t, status: 'CO_KHACH' as TableStatus } : t
-      );
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      setTables(updated);
-      // Navigate to order screen
-      router.push({
-        pathname: '/order',
-        params: { tableId },
-      });
-    } catch (error) {
-      Alert.alert('Lỗi', 'Không thể mở bàn');
-    }
+  const setupFirestoreListener = () => {
+    // Subscribe to realtime updates from Firestore
+    const unsubscribe = subscribeToTables((result) => {
+      if (result.success) {
+        console.log('📊 Tables updated from Firestore:', result.tables.length);
+        setTables(result.tables);
+        setIsLoading(false);
+        setIsConnected(true);
+
+        // If no tables, initialize them
+        if (result.tables.length === 0 && !isInitializing) {
+          handleInitializeTables();
+        }
+      } else {
+        console.error('❌ Error loading tables:', result.error);
+        setIsLoading(false);
+        setIsConnected(false);
+      }
+    });
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   };
 
-  const handleLogout = async () => {
+  const handleInitializeTables = async () => {
+    setIsInitializing(true);
     Alert.alert(
-      'Đăng xuất',
-      'Bạn có chắc muốn đăng xuất?',
+      'Khởi tạo dữ liệu',
+      'Chưa có dữ liệu bàn. Bạn có muốn tạo dữ liệu mặc định không?',
       [
         {
           text: 'Hủy',
           style: 'cancel',
+          onPress: () => setIsInitializing(false)
         },
         {
-          text: 'Đăng xuất',
-          style: 'destructive',
+          text: 'Tạo',
           onPress: async () => {
-            try {
-              await AsyncStorage.removeItem('user_token');
-              router.replace('/login');
-            } catch (error) {
-              console.error('Lỗi đăng xuất:', error);
-              Alert.alert('Lỗi', 'Không thể đăng xuất. Vui lòng thử lại!');
+            const result = await initializeTables();
+            if (result.success) {
+              Alert.alert('Thành công', 'Đã tạo dữ liệu bàn');
+            } else {
+              Alert.alert('Lỗi', result.error || 'Không thể tạo dữ liệu');
             }
-          },
-        },
+            setIsInitializing(false);
+          }
+        }
       ]
     );
   };
 
-  const filteredTables = tables.filter((table) => {
-    const matchesFilter = selectedFilter === 'ALL' || table.status === selectedFilter;
-    const matchesSearch = table.name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesFilter && matchesSearch;
-  });
+  const refreshTables = () => {
+    // Firestore auto-updates via listener, just show feedback
+    Alert.alert('Đã làm mới', 'Dữ liệu đang được đồng bộ realtime');
+    setIsConnected(true);
+  };
 
-  const getTableStatusInfo = (table: Table) => {
-    switch (table.status) {
+  const getTableStatusColor = (status: TableStatus) => {
+    switch (status) {
       case 'CO_KHACH':
-        return { label: 'Có khách', color: '#10b981', bgColor: '#d1fae5' };
-      case 'DA_DAT':
-        return { label: 'Đã đặt', color: '#f59e0b', bgColor: '#fef3c7' };
+        return '#10b981';
+      case 'CHO_MON':
+        return '#f59e0b';
       default:
-        return { label: 'Trống', color: '#6b7280', bgColor: '#f3f4f6' };
+        return '#6b7280';
     }
   };
 
-  const renderTable = ({ item }: { item: Table }) => {
-    const statusInfo = getTableStatusInfo(item);
-    const isOccupied = item.status === 'CO_KHACH';
-    const isReserved = item.status === 'DA_DAT';
+  const getTableStatusLabel = (status: TableStatus) => {
+    switch (status) {
+      case 'CO_KHACH':
+        return 'KHÁCH';
+      case 'CHO_MON':
+        return 'CHỜ MÓN';
+      default:
+        return 'TRỐNG';
+    }
+  };
+
+  const getAreaTables = () => {
+    return tables.filter(t => t.area === selectedArea);
+  };
+
+  const getAreaStats = (areaId: string) => {
+    const areaTables = tables.filter(t => t.area === areaId);
+    const emptyCount = areaTables.filter(t => t.status === 'TRONG').length;
+    return `${emptyCount}/${areaTables.length}`;
+  };
+
+  const openTableDetail = (table: Table) => {
+    setSelectedTable(table);
+  };
+
+  const closeTableDetail = () => {
+    setSelectedTable(null);
+  };
+
+  const openTable = async (table: Table) => {
+    if (table.status === 'TRONG') {
+      // Show modal to input guest count
+      setShowGuestModal(true);
+    } else {
+      // View existing order - navigate to menu
+      router.push({
+        pathname: '/(tabs)/menu',
+        params: {
+          tableId: table.id,
+          tableNumber: table.number,
+          guests: table.guests || 0
+        },
+      });
+      closeTableDetail();
+    }
+  };
+
+  const confirmOpenTable = () => {
+    if (!selectedTable) return;
+
+    setShowGuestModal(false);
+    closeTableDetail();
+
+    // Navigate to menu screen
+    router.push({
+      pathname: '/(tabs)/menu',
+      params: {
+        tableId: selectedTable.id,
+        tableNumber: selectedTable.number,
+        guests: guestCount
+      }
+    });
+
+    // Reset guest count
+    setGuestCount('4');
+  };
+
+  const renderTableCard = ({ item }: { item: Table }) => {
+    const statusColor = getTableStatusColor(item.status);
+    const statusLabel = getTableStatusLabel(item.status);
+
+    // Calculate duration if table is occupied
+    let displayDuration = item.duration || 0;
+    if (item.startTime && item.status !== 'TRONG') {
+      const now = Date.now();
+      const start = item.startTime.toMillis ? item.startTime.toMillis() : item.startTime;
+      displayDuration = Math.floor((now - start) / 60000); // minutes
+    }
 
     return (
       <TouchableOpacity
         style={[
           styles.tableCard,
-          isOccupied && styles.tableCardOccupied,
-          isReserved && styles.tableCardReserved,
+          { borderColor: statusColor }
         ]}
-        onPress={() => {
-          if (item.status === 'TRONG') {
-            openTable(item.id);
-          } else if (item.status === 'CO_KHACH') {
-            router.push({
-              pathname: '/order',
-              params: { tableId: item.id },
-            });
-          }
-        }}
+        onPress={() => openTableDetail(item)}
+        activeOpacity={0.8}
       >
-        <View style={[styles.statusBadge, { backgroundColor: statusInfo.bgColor }]}>
-          <Text style={[styles.statusText, { color: statusInfo.color }]}>
-            {statusInfo.label}
-          </Text>
+        {/* Header */}
+        <View style={styles.cardHeader}>
+          <Text style={styles.tableName}>Bàn {String(item.number).padStart(2, '0')}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
+            <Text style={styles.statusBadgeText}>{statusLabel}</Text>
+          </View>
         </View>
 
-        <Text style={styles.tableName}>{item.name}</Text>
-
-        {isOccupied && (
-          <>
-            <View style={styles.infoRow}>
-              <Clock size={16} color="#10b981" />
-              <Text style={styles.infoText}>45 phút</Text>
+        {/* Content */}
+        <View style={styles.cardContent}>
+          {item.status === 'TRONG' ? (
+            <View style={styles.emptyInfo}>
+              <View style={styles.infoItem}>
+                <Users size={16} color="#9ca3af" />
+                <Text style={styles.emptyText}>0/{item.capacity}</Text>
+              </View>
+              <View style={styles.infoItem}>
+                <Clock size={16} color="#9ca3af" />
+                <Text style={styles.emptyText}>--</Text>
+              </View>
             </View>
-            <Text style={styles.totalText}>Tổng: 560.000₫</Text>
-          </>
-        )}
+          ) : (
+            <>
+              <View style={styles.infoItem}>
+                <Users size={16} color={statusColor} />
+                <Text style={[styles.infoText, { color: statusColor }]}>
+                  {item.guests || 0}/{item.capacity}
+                </Text>
+              </View>
+              <View style={styles.infoItem}>
+                <Clock size={16} color={statusColor} />
+                <Text style={[styles.infoText, { color: statusColor }]}>
+                  {displayDuration}p
+                </Text>
+              </View>
+            </>
+          )}
+        </View>
 
-        {isReserved && (
-          <>
-            <View style={styles.infoRow}>
-              <Clock size={16} color="#f59e0b" />
-              <Text style={styles.infoText}>18:30</Text>
-            </View>
-            <Text style={styles.reservedName}>Mr. Hoàng</Text>
-          </>
-        )}
-
-        {item.status === 'TRONG' && (
-          <View style={styles.infoRow}>
-            <Users size={16} color="#6b7280" />
-            <Text style={styles.infoText}>{item.capacity} ghế</Text>
-          </View>
-        )}
+        {/* Footer */}
+        <View style={styles.cardFooter}>
+          <Text style={styles.footerLabel}>Tạm tính</Text>
+          <Text style={[
+            styles.footerAmount,
+            { color: item.status === 'TRONG' ? '#9ca3af' : statusColor }
+          ]}>
+            {item.status === 'TRONG' ? '0đ' : `${Math.floor((item.totalAmount || 0) / 1000)}k`}
+          </Text>
+        </View>
       </TouchableOpacity>
     );
   };
+
+  const areaTables = getAreaTables();
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#ef4444" />
+        <Text style={styles.loadingText}>Đang tải dữ liệu...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity>
-          <Menu size={24} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Sơ đồ bàn</Text>
-        <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerButton} onPress={handleLogout}>
-            <LogOut size={20} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity>
-            <Bell size={24} color="#fff" />
-            <View style={styles.notificationDot} />
-          </TouchableOpacity>
+        <View style={styles.headerLeft}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>
+              {userName.charAt(0).toUpperCase()}
+            </Text>
+          </View>
+          <View>
+            <Text style={styles.headerName}>{userName}</Text>
+            <View style={styles.connectionStatus}>
+              <View style={[
+                styles.statusIndicator,
+                { backgroundColor: isConnected ? '#10b981' : '#ef4444' }
+              ]} />
+              <Text style={styles.statusText}>
+                {isConnected ? 'Đang hoạt động' : 'Offline'}
+              </Text>
+            </View>
+          </View>
         </View>
+
+        <TouchableOpacity style={styles.iconButton}>
+          <Bell size={20} color="#1f2937" />
+          <View style={styles.notificationBadge}>
+            <Text style={styles.badgeText}>3</Text>
+          </View>
+        </TouchableOpacity>
       </View>
 
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <Search size={20} color="#6b7280" />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Tìm kiếm bàn..."
-          placeholderTextColor="#9ca3af"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-      </View>
-
-      {/* Filter Buttons */}
+      {/* Area Tabs */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={styles.filterContainer}
-        contentContainerStyle={styles.filterContent}
+        style={styles.areaNav}
+        contentContainerStyle={styles.areaNavContent}
       >
-        {(['ALL', 'TRONG', 'CO_KHACH', 'DA_DAT'] as const).map((filter) => (
-          <TouchableOpacity
-            key={filter}
-            style={[
-              styles.filterButton,
-              selectedFilter === filter && styles.filterButtonActive,
-            ]}
-            onPress={() => setSelectedFilter(filter)}
-          >
-            <Text
+        {AREAS.map(area => {
+          const isSelected = selectedArea === area.id;
+          const stats = getAreaStats(area.id);
+
+          return (
+            <TouchableOpacity
+              key={area.id}
               style={[
-                styles.filterText,
-                selectedFilter === filter && styles.filterTextActive,
+                styles.areaTab,
+                isSelected && styles.areaTabActive
               ]}
+              onPress={() => setSelectedArea(area.id)}
             >
-              {filter === 'ALL'
-                ? 'Tất cả'
-                : filter === 'TRONG'
-                ? 'Trống'
-                : filter === 'CO_KHACH'
-                ? 'Có khách'
-                : 'Đã đặt'}
-            </Text>
-          </TouchableOpacity>
-        ))}
+              <Text style={[
+                styles.areaTabText,
+                isSelected && styles.areaTabTextActive
+              ]}>
+                {area.name} ({stats})
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
 
       {/* Table Grid */}
-      <FlatList
-        data={filteredTables}
-        renderItem={renderTable}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
-        columnWrapperStyle={styles.row}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-      />
+      {areaTables.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateText}>Không có bàn</Text>
+          <TouchableOpacity
+            style={styles.initButton}
+            onPress={handleInitializeTables}
+          >
+            <Text style={styles.initButtonText}>Tạo dữ liệu mặc định</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <FlatList
+          data={areaTables}
+          renderItem={renderTableCard}
+          keyExtractor={item => item.id}
+          numColumns={2}
+          contentContainerStyle={styles.gridContent}
+          showsVerticalScrollIndicator={false}
+          key={`flatlist-${selectedArea}`}
+        />
+      )}
 
-      {/* Quick Open Button */}
+      {/* FAB Refresh Button */}
       <TouchableOpacity
-        style={styles.quickOpenButton}
-        onPress={() => {
-          const emptyTable = tables.find((t) => t.status === 'TRONG');
-          if (emptyTable) {
-            openTable(emptyTable.id);
-          } else {
-            Alert.alert('Thông báo', 'Không có bàn trống');
-          }
-        }}
+        style={styles.fab}
+        onPress={refreshTables}
+        activeOpacity={0.8}
       >
-        <Plus size={24} color="#fff" />
-        <Text style={styles.quickOpenText}>Mở bàn nhanh</Text>
+        <RefreshCw size={24} color="#fff" />
       </TouchableOpacity>
+
+      {/* Table Detail Modal */}
+      <Modal
+        visible={selectedTable !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={closeTableDetail}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {selectedTable && (
+              <>
+                <View style={styles.modalHeader}>
+                  <View>
+                    <Text style={styles.modalTitle}>Bàn {selectedTable.number}</Text>
+                    <Text style={[
+                      styles.modalStatus,
+                      { color: getTableStatusColor(selectedTable.status) }
+                    ]}>
+                      {getTableStatusLabel(selectedTable.status)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={closeTableDetail}>
+                    <X size={24} color="#1f2937" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.modalBody}>
+                  {selectedTable.status === 'TRONG' ? (
+                    <View style={styles.emptyTableInfo}>
+                      <Users size={48} color="#94a3b8" />
+                      <Text style={styles.emptyTableText}>Bàn đang trống</Text>
+                      <Text style={styles.capacityText}>
+                        Sức chứa: {selectedTable.capacity} khách
+                      </Text>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={styles.infoRow}>
+                        <Users size={20} color="#10b981" />
+                        <Text style={styles.infoLabel}>Số khách:</Text>
+                        <Text style={styles.infoValue}>
+                          {selectedTable.guests || 0}/{selectedTable.capacity}
+                        </Text>
+                      </View>
+
+                      <View style={styles.infoRow}>
+                        <Clock size={20} color="#10b981" />
+                        <Text style={styles.infoLabel}>Thời gian:</Text>
+                        <Text style={styles.infoValue}>
+                          {selectedTable.duration || 0} phút
+                        </Text>
+                      </View>
+
+                      <View style={styles.infoRow}>
+                        <DollarSign size={20} color="#10b981" />
+                        <Text style={styles.infoLabel}>Tổng tiền:</Text>
+                        <Text style={styles.infoValueHighlight}>
+                          {(selectedTable.totalAmount || 0).toLocaleString('vi-VN')}₫
+                        </Text>
+                      </View>
+                    </>
+                  )}
+                </View>
+
+                <TouchableOpacity
+                  style={styles.openButton}
+                  onPress={() => openTable(selectedTable)}
+                >
+                  <Text style={styles.openButtonText}>
+                    {selectedTable.status === 'TRONG' ? 'Mở bàn' : 'Xem chi tiết'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Guest Count Modal */}
+      <Modal
+        visible={showGuestModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowGuestModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Số lượng khách</Text>
+              <TouchableOpacity onPress={() => setShowGuestModal(false)}>
+                <X size={24} color="#1f2937" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.guestInputContainer}>
+              <Text style={styles.guestLabel}>Bàn {selectedTable?.number}</Text>
+              <TextInput
+                style={styles.guestInput}
+                value={guestCount}
+                onChangeText={setGuestCount}
+                keyboardType="numeric"
+                placeholder="Nhập số khách"
+                placeholderTextColor="#9ca3af"
+              />
+              <Text style={styles.capacityHint}>
+                Sức chứa: {selectedTable?.capacity} khách
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.openButton}
+              onPress={confirmOpenTable}
+            >
+              <Text style={styles.openButtonText}>Xác nhận</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -284,123 +517,164 @@ export default function TablePlanScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#111827',
+    backgroundColor: '#FFFFFF',
   },
+
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#6b7280',
+  },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    paddingTop: 60,
-    backgroundColor: '#111827',
+    padding: 16,
+    paddingTop: 50,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  headerRight: {
+  headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 15,
+    gap: 12,
   },
-  headerButton: {
-    padding: 4,
-  },
-  notificationDot: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#ef4444',
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1f2937',
-    marginHorizontal: 20,
-    marginBottom: 15,
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    borderRadius: 12,
-    gap: 10,
-  },
-  searchInput: {
-    flex: 1,
-    color: '#fff',
-    fontSize: 16,
-  },
-  filterContainer: {
-    marginBottom: 20,
-  },
-  filterContent: {
-    paddingHorizontal: 20,
-    gap: 10,
-  },
-  filterButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
+  avatar: {
+    width: 40,
+    height: 40,
     borderRadius: 20,
-    backgroundColor: '#1f2937',
-    borderWidth: 1,
-    borderColor: '#374151',
+    backgroundColor: '#FDB022',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  filterButtonActive: {
-    backgroundColor: '#10b981',
-    borderColor: '#10b981',
-  },
-  filterText: {
-    color: '#9ca3af',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  filterTextActive: {
-    color: '#fff',
-  },
-  listContent: {
-    padding: 15,
-    paddingBottom: 100,
-  },
-  row: {
-    justifyContent: 'space-between',
-  },
-  tableCard: {
-    width: '48%',
-    backgroundColor: '#1f2937',
-    borderRadius: 16,
-    padding: 15,
-    marginBottom: 15,
-    borderWidth: 2,
-    borderColor: '#374151',
-  },
-  tableCardOccupied: {
-    backgroundColor: '#065f46',
-    borderColor: '#10b981',
-  },
-  tableCardReserved: {
-    backgroundColor: '#78350f',
-    borderColor: '#f59e0b',
-  },
-  statusBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginBottom: 10,
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  tableName: {
+  avatarText: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 8,
   },
-  infoRow: {
+  headerName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  connectionStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  statusIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusText: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#ef4444',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+
+  areaNav: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    maxHeight: 56,
+  },
+  areaNavContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  areaTab: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#374151',
+    marginRight: 8,
+    height: 32,
+    justifyContent: 'center',
+  },
+  areaTabActive: {
+    backgroundColor: '#ef4444',
+  },
+  areaTabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  areaTabTextActive: {
+    color: '#fff',
+  },
+
+  gridContent: {
+    padding: 8,
+    paddingBottom: 100,
+  },
+  tableCard: {
+    flex: 1,
+    margin: 6,
+    backgroundColor: '#1f2937',
+    borderRadius: 12,
+    borderWidth: 2,
+    padding: 12,
+    minHeight: 140,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  tableName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  cardContent: {
+    marginBottom: 12,
+  },
+  infoItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -408,40 +682,174 @@ const styles = StyleSheet.create({
   },
   infoText: {
     fontSize: 14,
-    color: '#d1d5db',
+    fontWeight: '600',
   },
-  totalText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#10b981',
-    marginTop: 8,
+  emptyInfo: {
+    opacity: 0.5,
   },
-  reservedName: {
+  emptyText: {
     fontSize: 14,
-    color: '#f59e0b',
-    marginTop: 8,
+    color: '#9ca3af',
   },
-  quickOpenButton: {
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#374151',
+  },
+  footerLabel: {
+    fontSize: 12,
+    color: '#9ca3af',
+  },
+  footerAmount: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+
+  fab: {
     position: 'absolute',
     bottom: 20,
-    left: 20,
     right: 20,
-    backgroundColor: '#10b981',
-    flexDirection: 'row',
-    alignItems: 'center',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#ef4444',
     justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 16,
-    gap: 10,
-    shadowColor: '#10b981',
+    alignItems: 'center',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
   },
-  quickOpenText: {
+
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  emptyStateText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#6b7280',
+    marginBottom: 16,
+  },
+  initButton: {
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  initButtonText: {
     color: '#fff',
     fontSize: 16,
+    fontWeight: '600',
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 24,
+  },
+  modalTitle: {
+    fontSize: 24,
     fontWeight: 'bold',
+    color: '#1f2937',
+  },
+  modalStatus: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  modalBody: {
+    marginBottom: 24,
+  },
+  emptyTableInfo: {
+    alignItems: 'center',
+    paddingVertical: 32,
+  },
+  emptyTableText: {
+    fontSize: 18,
+    color: '#6b7280',
+    marginTop: 16,
+  },
+  capacityText: {
+    fontSize: 14,
+    color: '#9ca3af',
+    marginTop: 8,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  infoLabel: {
+    fontSize: 16,
+    color: '#6b7280',
+    flex: 1,
+  },
+  infoValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  infoValueHighlight: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#10b981',
+  },
+  openButton: {
+    backgroundColor: '#FDB022',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  openButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+
+  guestInputContainer: {
+    marginBottom: 24,
+  },
+  guestLabel: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 12,
+  },
+  guestInput: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 8,
+  },
+  capacityHint: {
+    fontSize: 14,
+    color: '#6b7280',
   },
 });
