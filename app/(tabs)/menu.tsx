@@ -9,8 +9,7 @@ import {
 import {
   addOrderItem,
   createOrder,
-  getOrderByTable,
-  updateOrderItem
+  getOrderByTable
 } from '@/services/orderService';
 import { TABLE_STATUS, updateTableStatus } from '@/services/tableService';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -54,6 +53,7 @@ type CartItem = {
   price: number;
   quantity: number;
   imageUrl: string;
+  note?: string;
 };
 
 export default function MenuScreen() {
@@ -62,6 +62,7 @@ export default function MenuScreen() {
   const tableId = Array.isArray(params.tableId) ? params.tableId[0] : params.tableId;
   const tableNumber = Array.isArray(params.tableNumber) ? params.tableNumber[0] : params.tableNumber;
   const guests = Array.isArray(params.guests) ? params.guests[0] : params.guests;
+  const isAddingMore = params.isAddingMore === 'true'; // Flag to indicate adding more items
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -70,19 +71,27 @@ export default function MenuScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [orderId, setOrderId] = useState<string | null>(null);
+  const [originalOrderItems, setOriginalOrderItems] = useState<CartItem[]>([]); // Track original items from existing order
   const [isLoading, setIsLoading] = useState(true);
   const [isInitializing, setIsInitializing] = useState(false);
   const [isCartVisible, setIsCartVisible] = useState(false);
+  const [isConfirmingOrder, setIsConfirmingOrder] = useState(false);
+
+  // Note modal states
+  const [isNoteModalVisible, setIsNoteModalVisible] = useState(false);
+  const [selectedMenuItem, setSelectedMenuItem] = useState<MenuItem | null>(null);
+  const [itemNote, setItemNote] = useState('');
 
   useEffect(() => {
     setupListeners();
   }, []);
 
   useEffect(() => {
-    if (tableId) {
+    if (tableId && !isAddingMore) {
+      // Only load existing order if NOT adding more items
       loadOrCreateOrder();
     }
-  }, [tableId]);
+  }, [tableId, isAddingMore]);
 
   useEffect(() => {
     filterItems();
@@ -145,32 +154,15 @@ export default function MenuScreen() {
     if (success && order) {
       console.log('Found existing order:', order.id);
       setOrderId(order.id);
-      setCart(order.items || []);
+      const existingItems = order.items || [];
+      setCart(existingItems);
+      setOriginalOrderItems(existingItems); // Save original items
     } else {
-      console.log('Creating new order for table:', tableId);
-      // Create new order
-      const result = await createOrder(
-        tableId as string,
-        parseInt(tableNumber as string),
-        parseInt(guests as string) || 0
-      );
-
-      if (result.success) {
-        console.log('Created new order:', result.orderId);
-        setOrderId(result.orderId);
-        // Update table status to CO_KHACH
-        await updateTableStatus(
-          tableId as string,
-          TABLE_STATUS.CO_KHACH,
-          {
-            guests: parseInt(guests as string) || 0,
-            startTime: new Date()
-          }
-        );
-      } else {
-        console.error('Failed to create order:', result.error);
-        Alert.alert('Lỗi', 'Không thể tạo đơn hàng: ' + result.error);
-      }
+      console.log('No existing order - will create when user confirms');
+      // Don't create order until user confirms
+      setOrderId(null);
+      setCart([]);
+      setOriginalOrderItems([]); // No original items for new order
     }
   };
 
@@ -194,50 +186,56 @@ export default function MenuScreen() {
     setFilteredItems(filtered);
   };
 
-  const handleAddToCart = async (menuItem: MenuItem) => {
-    if (!orderId) {
-      Alert.alert('Lỗi', 'Chưa có đơn hàng');
-      return;
-    }
-
-    const result = await addOrderItem(orderId, menuItem, 1);
-
-    if (result.success) {
-      // Update local cart
-      const existingIndex = cart.findIndex(item => item.menuId === menuItem.id);
-      if (existingIndex >= 0) {
-        const newCart = [...cart];
-        newCart[existingIndex].quantity += 1;
-        setCart(newCart);
-      } else {
-        setCart([...cart, {
-          menuId: menuItem.id,
-          name: menuItem.name,
-          price: menuItem.price,
-          quantity: 1,
-          imageUrl: menuItem.imageUrl
-        }]);
-      }
-    } else {
-      Alert.alert('Lỗi', result.error || 'Không thể thêm món');
-    }
+  const handleAddToCart = (menuItem: MenuItem) => {
+    // Open note modal instead of adding immediately
+    setSelectedMenuItem(menuItem);
+    setItemNote('');
+    setIsNoteModalVisible(true);
   };
 
-  const handleUpdateQuantity = async (menuId: string, newQuantity: number) => {
-    if (!orderId) return;
+  const confirmAddToCart = () => {
+    if (!selectedMenuItem) return;
 
-    const result = await updateOrderItem(orderId, menuId, newQuantity);
+    // Add to local cart with note
+    const existingIndex = cart.findIndex(item => item.menuId === selectedMenuItem.id);
 
-    if (result.success) {
-      if (newQuantity <= 0) {
-        setCart(cart.filter(item => item.menuId !== menuId));
-      } else {
-        setCart(cart.map(item =>
-          item.menuId === menuId
-            ? { ...item, quantity: newQuantity }
-            : item
-        ));
+    if (existingIndex >= 0) {
+      // Item exists - update quantity
+      const newCart = [...cart];
+      newCart[existingIndex].quantity += 1;
+      // Update note if provided
+      if (itemNote.trim()) {
+        newCart[existingIndex].note = itemNote.trim();
       }
+      setCart(newCart);
+    } else {
+      // New item - add to cart
+      setCart([...cart, {
+        menuId: selectedMenuItem.id,
+        name: selectedMenuItem.name,
+        price: selectedMenuItem.price,
+        quantity: 1,
+        imageUrl: selectedMenuItem.imageUrl,
+        note: itemNote.trim() || undefined
+      }]);
+    }
+
+    // Close modal
+    setIsNoteModalVisible(false);
+    setSelectedMenuItem(null);
+    setItemNote('');
+  };
+
+  const handleUpdateQuantity = (menuId: string, newQuantity: number) => {
+    // Update local cart only
+    if (newQuantity <= 0) {
+      setCart(cart.filter(item => item.menuId !== menuId));
+    } else {
+      setCart(cart.map(item =>
+        item.menuId === menuId
+          ? { ...item, quantity: newQuantity }
+          : item
+      ));
     }
   };
 
@@ -259,10 +257,61 @@ export default function MenuScreen() {
     setIsCartVisible(true);
   };
 
-  const confirmOrder = () => {
-    Alert.alert('Thành công', 'Đã gửi order đến bếp');
-    setIsCartVisible(false);
-    router.back();
+  const confirmOrder = async () => {
+    if (cart.length === 0) return;
+
+    setIsConfirmingOrder(true);
+    try {
+      // Always create new order (either first order or additional order)
+      const result = await createOrder(
+        tableId as string,
+        parseInt(tableNumber as string),
+        parseInt(guests as string) || 0
+      );
+
+      if (!result.success || !result.orderId) {
+        Alert.alert('Lỗi', 'Không thể tạo đơn hàng');
+        return;
+      }
+
+      const newOrderId = result.orderId;
+
+      // Add all items to the new order
+      for (const item of cart) {
+        const menuItem = {
+          id: item.menuId,
+          name: item.name,
+          price: item.price,
+          imageUrl: item.imageUrl
+        };
+
+        await addOrderItem(newOrderId, menuItem, item.quantity, item.note || '');
+      }
+
+      // Update table status
+      // If this is adding more items (table already has orders), set to CHO_MON
+      // Otherwise (first order), set to CO_KHACH
+      const tableStatus = isAddingMore ? TABLE_STATUS.CHO_MON : TABLE_STATUS.CO_KHACH;
+
+      await updateTableStatus(
+        tableId as string,
+        tableStatus,
+        {
+          guests: parseInt(guests as string) || 0,
+          startTime: new Date()
+        }
+      );
+
+      Alert.alert('Thành công', 'Đã gửi order đến bếp');
+      setCart([]); // Xóa giỏ hàng sau khi tạo order thành công
+      setIsCartVisible(false);
+      router.back();
+    } catch (error) {
+      Alert.alert('Lỗi', 'Có lỗi xảy ra khi tạo đơn');
+      console.error('Error creating order:', error);
+    } finally {
+      setIsConfirmingOrder(false);
+    }
   };
 
   const renderCategoryItem = ({ item }: { item: Category }) => {
@@ -471,6 +520,11 @@ export default function MenuScreen() {
                     <Text style={styles.cartItemPrice}>
                       {item.price.toLocaleString('vi-VN')}đ
                     </Text>
+                    {item.note && (
+                      <Text style={styles.cartItemNote}>
+                        📝 {item.note}
+                      </Text>
+                    )}
                   </View>
                   <View style={styles.cartItemActions}>
                     <TouchableOpacity
@@ -507,14 +561,62 @@ export default function MenuScreen() {
               <TouchableOpacity
                 style={styles.confirmOrderButton}
                 onPress={confirmOrder}
+                disabled={isConfirmingOrder}
               >
-                <Text style={styles.confirmOrderText}>Xác nhận gọi món</Text>
+                {isConfirmingOrder ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.confirmOrderText}>Xác nhận gọi món</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-    </View>
+
+      {/* Note Input Modal */}
+      < Modal
+        visible={isNoteModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsNoteModalVisible(false)
+        }
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Thêm ghi chú</Text>
+              <TouchableOpacity onPress={() => setIsNoteModalVisible(false)}>
+                <X size={24} color="#1f2937" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <Text style={styles.noteLabel}>{selectedMenuItem?.name}</Text>
+              <TextInput
+                style={styles.noteInput}
+                placeholder="Ghi chú cho món ăn (tùy chọn)"
+                placeholderTextColor="#9ca3af"
+                value={itemNote}
+                onChangeText={setItemNote}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+            </View>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={styles.confirmOrderButton}
+                onPress={confirmAddToCart}
+              >
+                <Text style={styles.confirmOrderText}>Thêm vào giỏ</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal >
+    </View >
   );
 }
 
@@ -874,5 +976,28 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: '#6b7280',
+  },
+
+  // Note styles
+  noteLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 12,
+  },
+  noteInput: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    color: '#1f2937',
+    minHeight: 80,
+  },
+  cartItemNote: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
 });

@@ -1,5 +1,9 @@
 import { auth } from '@/services/firebaseConfig';
 import {
+  completeAllTableOrders,
+  getTotalAmountByTable
+} from '@/services/orderService';
+import {
   initializeTables,
   subscribeToTables
 } from '@/services/tableService';
@@ -23,7 +27,7 @@ import {
 
 const { width } = Dimensions.get('window');
 
-type TableStatus = 'TRONG' | 'CO_KHACH' | 'CHO_MON';
+type TableStatus = 'TRONG' | 'CO_KHACH' | 'CHO_MON' | 'DA_PHUC_VU';
 
 type Area = {
   id: string;
@@ -61,6 +65,8 @@ export default function TableMapScreen() {
   const [isInitializing, setIsInitializing] = useState(false);
   const [showGuestModal, setShowGuestModal] = useState(false);
   const [guestCount, setGuestCount] = useState('4');
+  const [tableTotalAmount, setTableTotalAmount] = useState(0);
+  const [isPaymentProcessing, setIsPaymentProcessing] = useState(false);
 
   useEffect(() => {
     getUserInfo();
@@ -140,6 +146,8 @@ export default function TableMapScreen() {
         return '#10b981';
       case 'CHO_MON':
         return '#f59e0b';
+      case 'DA_PHUC_VU':
+        return '#3b82f6';
       default:
         return '#6b7280';
     }
@@ -151,6 +159,8 @@ export default function TableMapScreen() {
         return 'KHÁCH';
       case 'CHO_MON':
         return 'CHỜ MÓN';
+      case 'DA_PHUC_VU':
+        return 'ĐÃ PHỤC VỤ';
       default:
         return 'TRỐNG';
     }
@@ -166,8 +176,18 @@ export default function TableMapScreen() {
     return `${emptyCount}/${areaTables.length}`;
   };
 
-  const openTableDetail = (table: Table) => {
+  const openTableDetail = async (table: Table) => {
     setSelectedTable(table);
+
+    // Load total amount for the table if it has guests
+    if (table.status !== 'TRONG') {
+      const { success, totalAmount } = await getTotalAmountByTable(table.id);
+      if (success) {
+        setTableTotalAmount(totalAmount);
+      }
+    } else {
+      setTableTotalAmount(0);
+    }
   };
 
   const closeTableDetail = () => {
@@ -179,16 +199,17 @@ export default function TableMapScreen() {
       // Show modal to input guest count
       setShowGuestModal(true);
     } else {
-      // View existing order - navigate to menu
+      // Navigate directly to menu to add more items
+      closeTableDetail();
       router.push({
         pathname: '/(tabs)/menu',
         params: {
           tableId: table.id,
           tableNumber: table.number,
-          guests: table.guests || 0
+          guests: table.guests || 0,
+          isAddingMore: 'true' // Flag to create new order instead of loading old one
         },
       });
-      closeTableDetail();
     }
   };
 
@@ -210,6 +231,35 @@ export default function TableMapScreen() {
 
     // Reset guest count
     setGuestCount('4');
+  };
+
+  const handlePayment = async () => {
+    if (!selectedTable) return;
+
+    Alert.alert(
+      'Xác nhận thanh toán',
+      `Tổng tiền: ${tableTotalAmount.toLocaleString('vi-VN')}₫\n\nBạn có chắc muốn thanh toán và đóng bàn?`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Thanh toán',
+          onPress: async () => {
+            setIsPaymentProcessing(true);
+            try {
+              const result = await completeAllTableOrders(selectedTable.id);
+              if (result.success) {
+                Alert.alert('Thành công', 'Đã thanh toán và đóng bàn');
+                closeTableDetail();
+              } else {
+                Alert.alert('Lỗi', result.error || 'Không thể thanh toán');
+              }
+            } finally {
+              setIsPaymentProcessing(false);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const renderTableCard = ({ item }: { item: Table }) => {
@@ -449,21 +499,35 @@ export default function TableMapScreen() {
                         <DollarSign size={20} color="#10b981" />
                         <Text style={styles.infoLabel}>Tổng tiền:</Text>
                         <Text style={styles.infoValueHighlight}>
-                          {(selectedTable.totalAmount || 0).toLocaleString('vi-VN')}₫
+                          {tableTotalAmount.toLocaleString('vi-VN')}₫
                         </Text>
                       </View>
                     </>
                   )}
                 </View>
 
-                <TouchableOpacity
-                  style={styles.openButton}
-                  onPress={() => openTable(selectedTable)}
-                >
-                  <Text style={styles.openButtonText}>
-                    {selectedTable.status === 'TRONG' ? 'Mở bàn' : 'Xem chi tiết'}
-                  </Text>
-                </TouchableOpacity>
+                {selectedTable.status === 'DA_PHUC_VU' ? (
+                  <TouchableOpacity
+                    style={[styles.openButton, { backgroundColor: '#10b981' }]}
+                    onPress={handlePayment}
+                    disabled={isPaymentProcessing}
+                  >
+                    {isPaymentProcessing ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.openButtonText}>Thanh toán</Text>
+                    )}
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.openButton}
+                    onPress={() => openTable(selectedTable)}
+                  >
+                    <Text style={styles.openButtonText}>
+                      {selectedTable.status === 'TRONG' ? 'Mở bàn' : 'Gọi món thêm'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </>
             )}
           </View>

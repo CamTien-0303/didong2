@@ -19,7 +19,8 @@ const TABLES_COLLECTION = 'tables';
 export const TABLE_STATUS = {
     TRONG: 'TRONG',
     CO_KHACH: 'CO_KHACH',
-    CHO_MON: 'CHO_MON'
+    CHO_MON: 'CHO_MON',
+    DA_PHUC_VU: 'DA_PHUC_VU'
 };
 
 /**

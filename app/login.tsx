@@ -29,11 +29,12 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Google OAuth Setup
+  // Google OAuth Setup - Simplified for Expo
   const [request, response, promptAsync] = Google.useAuthRequest({
     webClientId: GOOGLE_OAUTH_CONFIG.webClientId,
-    iosClientId: GOOGLE_OAUTH_CONFIG.iosClientId,
     androidClientId: GOOGLE_OAUTH_CONFIG.androidClientId,
+    redirectUri: 'https://auth.expo.io/@phthicamtien030325/smart-order',
+    scopes: ['profile', 'email'],
   });
 
   useEffect(() => {

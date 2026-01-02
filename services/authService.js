@@ -1,11 +1,14 @@
 import * as WebBrowser from 'expo-web-browser';
 import {
   createUserWithEmailAndPassword,
+  EmailAuthProvider,
   FacebookAuthProvider,
   GoogleAuthProvider,
+  reauthenticateWithCredential,
   signInWithCredential,
   signInWithEmailAndPassword,
-  signOut
+  signOut,
+  updatePassword
 } from "firebase/auth";
 import { auth } from "./firebaseConfig";
 
@@ -55,5 +58,30 @@ export const logoutUser = async () => {
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
+  }
+};
+
+export const changePassword = async (currentPassword, newPassword) => {
+  try {
+    const user = auth.currentUser;
+    if (!user || !user.email) {
+      return { success: false, message: 'Không tìm thấy người dùng' };
+    }
+
+    // Re-authenticate user with current password
+    const credential = EmailAuthProvider.credential(user.email, currentPassword);
+    await reauthenticateWithCredential(user, credential);
+
+    // Update password
+    await updatePassword(user, newPassword);
+    return { success: true };
+  } catch (error) {
+    let message = 'Đổi mật khẩu thất bại';
+    if (error.code === 'auth/wrong-password') {
+      message = 'Mật khẩu hiện tại không đúng';
+    } else if (error.code === 'auth/weak-password') {
+      message = 'Mật khẩu mới quá yếu (tối thiểu 6 ký tự)';
+    }
+    return { success: false, message };
   }
 };

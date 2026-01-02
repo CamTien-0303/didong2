@@ -12,7 +12,7 @@ import {
     where
 } from 'firebase/firestore';
 import { db } from './firebaseConfig';
-import { updateTableAmount } from './tableService';
+import { closeTable, TABLE_STATUS, updateTableAmount, updateTableStatus } from './tableService';
 
 const ORDERS_COLLECTION = 'orders';
 
@@ -218,6 +218,13 @@ export const removeOrderItem = async (orderId, menuId) => {
  */
 export const updateOrderStatus = async (orderId, status) => {
     try {
+        // Get order to access tableId
+        const { order } = await getOrder(orderId);
+
+        if (!order) {
+            return { success: false, error: 'Order not found' };
+        }
+
         const orderRef = doc(db, ORDERS_COLLECTION, orderId);
 
         const updateData = {
@@ -227,10 +234,37 @@ export const updateOrderStatus = async (orderId, status) => {
 
         if (status === 'preparing') {
             updateData.confirmedAt = Timestamp.now();
+            // Update table status to CHO_MON (waiting for food)
+            await updateTableStatus(order.tableId, TABLE_STATUS.CHO_MON);
         } else if (status === 'served') {
             updateData.servedAt = Timestamp.now();
+
+            // Check if ALL orders of this table are served
+            const { success: getAllSuccess, orders } = await getAllOrdersByTable(order.tableId);
+
+            if (getAllSuccess) {
+                // Get all active orders (not cancelled or completed)
+                const activeOrders = orders.filter(o =>
+                    o.status !== 'cancelled' && o.status !== 'completed'
+                );
+
+                // Check if all active orders will be served (including this one)
+                const allServed = activeOrders.every(o =>
+                    o.id === orderId || o.status === 'served'
+                );
+
+                if (allServed) {
+                    // All orders served -> table status: DA_PHUC_VU
+                    await updateTableStatus(order.tableId, TABLE_STATUS.DA_PHUC_VU);
+                } else {
+                    // Some orders still pending/preparing -> table status: CHO_MON
+                    await updateTableStatus(order.tableId, TABLE_STATUS.CHO_MON);
+                }
+            }
         } else if (status === 'completed') {
             updateData.paidAt = Timestamp.now();
+            // Close table when order is completed
+            await closeTable(order.tableId);
         }
 
         await updateDoc(orderRef, updateData);
@@ -284,8 +318,8 @@ export const cancelOrder = async (orderId) => {
             updatedAt: Timestamp.now()
         });
 
-        // Reset table amount
-        await updateTableAmount(order.tableId, 0);
+        // Close table when order is cancelled
+        await closeTable(order.tableId);
 
         return { success: true };
     } catch (error) {
@@ -415,5 +449,243 @@ export const subscribeToAllOrders = (callback) => {
     }
 };
 
+/**
+ * Get all orders by table ID (including completed orders)
+ */
+export const getAllOrdersByTable = async (tableId) => {
+    try {
+        const ordersRef = collection(db, ORDERS_COLLECTION);
+        const q = query(ordersRef, where('tableId', '==', tableId));
+        const snapshot = await getDocs(q);
 
+        const orders = snapshot.docs.map(doc => ({
+            ...doc.data(),
+            id: doc.id
+        }));
 
+        return { success: true, orders };
+    } catch (error) {
+        console.error('Error getting all orders by table:', error);
+        return { success: false, error: error.message, orders: [] };
+    }
+};
+
+/**
+ * Get total amount for all orders of a table
+ */
+export const getTotalAmountByTable = async (tableId) => {
+    try {
+        const { success, orders } = await getAllOrdersByTable(tableId);
+
+        if (!success) {
+            return { success: false, error: 'Cannot get orders', totalAmount: 0 };
+        }
+
+        // Sum all order amounts (excluding cancelled orders)
+        const totalAmount = orders
+            .filter(order => order.status !== 'cancelled')
+            .reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+
+        return { success: true, totalAmount };
+    } catch (error) {
+        console.error('Error getting total amount by table:', error);
+        return { success: false, error: error.message, totalAmount: 0 };
+    }
+};
+
+/**
+ * Complete all orders of a table and close the table
+ */
+export const completeAllTableOrders = async (tableId) => {
+    try {
+        // Get all active orders for the table
+        const { success, orders } = await getAllOrdersByTable(tableId);
+
+        if (!success) {
+            return { success: false, error: 'Failed to get orders' };
+        }
+
+        // Mark all non-completed/cancelled orders as completed
+        const updatePromises = orders
+            .filter(order => order.status !== 'completed' && order.status !== 'cancelled')
+            .map(order => {
+                const orderRef = doc(db, ORDERS_COLLECTION, order.id);
+                return updateDoc(orderRef, {
+                    status: 'completed',
+                    paidAt: Timestamp.now(),
+                    updatedAt: Timestamp.now()
+                });
+            });
+
+        await Promise.all(updatePromises);
+
+        // Close the table
+        await closeTable(tableId);
+
+        return { success: true };
+    } catch (error) {
+        console.error('Error completing table orders:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+/**
+ * Get revenue statistics by date range
+ */
+export const getRevenueByDateRange = async (startDate, endDate) => {
+    try {
+        const ordersRef = collection(db, ORDERS_COLLECTION);
+        // Simplified query - filter by status only, then filter dates in code
+        const q = query(
+            ordersRef,
+            where('status', '==', 'completed')
+        );
+
+        const querySnapshot = await getDocs(q);
+        const orders = [];
+        let totalRevenue = 0;
+
+        const startTime = Timestamp.fromDate(startDate);
+        const endTime = Timestamp.fromDate(endDate);
+
+        querySnapshot.forEach((doc) => {
+            const order = { id: doc.id, ...doc.data() };
+
+            // Filter by date range in code (no index needed)
+            if (order.paidAt &&
+                order.paidAt.toMillis() >= startTime.toMillis() &&
+                order.paidAt.toMillis() <= endTime.toMillis()) {
+                orders.push(order);
+                totalRevenue += order.totalAmount || 0;
+            }
+        });
+
+        // Sort by date (descending)
+        orders.sort((a, b) => b.paidAt.toMillis() - a.paidAt.toMillis());
+
+        return {
+            success: true,
+            orders,
+            totalRevenue,
+            orderCount: orders.length,
+            averageOrderValue: orders.length > 0 ? totalRevenue / orders.length : 0
+        };
+    } catch (error) {
+        console.error('Error getting revenue by date range:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+/**
+ * Get revenue statistics for predefined periods
+ */
+export const getRevenueStats = async (period = 'today') => {
+    const now = new Date();
+    let startDate, endDate;
+
+    switch (period) {
+        case 'today':
+            startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+            endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+            break;
+        case 'week':
+            const dayOfWeek = now.getDay();
+            const diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+            startDate = new Date(now.getFullYear(), now.getMonth(), diff, 0, 0, 0);
+            endDate = new Date(now.getFullYear(), now.getMonth(), diff + 6, 23, 59, 59);
+            break;
+        case 'month':
+            startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+            endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+            break;
+        case '7days':
+            startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            startDate.setHours(0, 0, 0, 0);
+            endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+            break;
+        case '30days':
+            startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            startDate.setHours(0, 0, 0, 0);
+            endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+            break;
+        default:
+            startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+            endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    }
+
+    return await getRevenueByDateRange(startDate, endDate);
+};
+
+/**
+ * Get all active orders (not completed or cancelled)
+ */
+export const getActiveOrders = async () => {
+    try {
+        const ordersRef = collection(db, ORDERS_COLLECTION);
+        // Simple query - get all orders, filter in code to avoid index requirement
+        const querySnapshot = await getDocs(ordersRef);
+        const orders = [];
+
+        querySnapshot.forEach((doc) => {
+            const order = { id: doc.id, ...doc.data() };
+            // Filter active orders in code
+            if (order.status === 'pending' || order.status === 'preparing' || order.status === 'served') {
+                orders.push(order);
+            }
+        });
+
+        // Sort by creation time (descending)
+        orders.sort((a, b) => {
+            const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+            const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+            return timeB - timeA;
+        });
+
+        return { success: true, orders };
+    } catch (error) {
+        console.error('Error getting active orders:', error);
+        return { success: false, error: error.message, orders: [] };
+    }
+};
+
+/**
+ * Subscribe to active orders (real-time)
+ * Listens to all orders and filters for active ones (pending, preparing, served)
+ */
+export const subscribeToActiveOrders = (callback) => {
+    try {
+        const ordersRef = collection(db, ORDERS_COLLECTION);
+        const q = query(ordersRef);
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const allOrders = snapshot.docs.map(doc => ({
+                ...doc.data(),
+                id: doc.id
+            }));
+
+            // Filter for active orders only
+            const activeOrders = allOrders.filter(order =>
+                order.status === 'pending' ||
+                order.status === 'preparing' ||
+                order.status === 'served'
+            );
+
+            // Sort by creation time (descending - newest first)
+            activeOrders.sort((a, b) => {
+                const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+                const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+                return timeB - timeA;
+            });
+
+            callback({ success: true, orders: activeOrders });
+        }, (error) => {
+            console.error('Error in active orders subscription:', error);
+            callback({ success: false, error: error.message, orders: [] });
+        });
+
+        return unsubscribe;
+    } catch (error) {
+        console.error('Error subscribing to active orders:', error);
+        return () => { };
+    }
+};

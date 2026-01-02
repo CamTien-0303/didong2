@@ -10,8 +10,11 @@ export const GOOGLE_OAUTH_CONFIG = {
     // iOS Client ID (optional, only if you deploy to iOS)
     iosClientId: "YOUR_IOS_CLIENT_ID.apps.googleusercontent.com",
 
-    // Android Client ID (optional, only if you deploy to Android)
-    androidClientId: "YOUR_ANDROID_CLIENT_ID.apps.googleusercontent.com",
+    // Android Client ID - using web client ID for now
+    androidClientId: "130691733256-cj1cskb0ttrf54icrht2qi0tqt3a8njt.apps.googleusercontent.com",
+
+    // Force redirect URL for Expo
+    redirectUrl: "https://auth.expo.io/@phthicamtien030325/smart-order",
 };
 
 // Facebook OAuth Configuration  
