@@ -85,3 +85,21 @@ export const changePassword = async (currentPassword, newPassword) => {
     return { success: false, message };
   }
 };
+
+/**
+ * Reset password - send password reset email
+ */
+export const resetPassword = async (email) => {
+  try {
+    await sendPasswordResetEmail(auth, email);
+    return { success: true };
+  } catch (error) {
+    let message = 'Gửi email reset mật khẩu thất bại';
+    if (error.code === 'auth/user-not-found') {
+      message = 'Email không tồn tại trong hệ thống';
+    } else if (error.code === 'auth/invalid-email') {
+      message = 'Email không hợp lệ';
+    }
+    return { success: false, message };
+  }
+};

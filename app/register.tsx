@@ -18,6 +18,7 @@ import {
 
 export default function RegisterScreen() {
   const router = useRouter();
+  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -26,12 +27,13 @@ export default function RegisterScreen() {
   const [isLoading, setIsLoading] = useState(false);
 
   const handleRegister = async () => {
+    const trimmedDisplayName = displayName.trim();
     const trimmedEmail = email.trim();
     const trimmedPassword = password.trim();
     const trimmedConfirmPassword = confirmPassword.trim();
 
     // Validation
-    if (!trimmedEmail || !trimmedPassword || !trimmedConfirmPassword) {
+    if (!trimmedDisplayName || !trimmedEmail || !trimmedPassword || !trimmedConfirmPassword) {
       Alert.alert('Thông báo', 'Vui lòng điền đầy đủ thông tin');
       return;
     }
@@ -102,6 +104,19 @@ export default function RegisterScreen() {
         </View>
 
         <View style={styles.formContainer}>
+          {/* Display Name */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Tên người dùng</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Nhập tên người dùng"
+              placeholderTextColor="#A0A0A0"
+              value={displayName}
+              onChangeText={setDisplayName}
+              autoCapitalize="words"
+            />
+          </View>
+
           {/* Email */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Email</Text>

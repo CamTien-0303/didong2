@@ -8,6 +8,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -17,7 +18,7 @@ import {
   View
 } from 'react-native';
 
-import { loginUser, loginWithGoogle } from '../services/authService';
+import { loginUser, loginWithGoogle, resetPassword } from '../services/authService';
 import { FACEBOOK_OAUTH_CONFIG, GOOGLE_OAUTH_CONFIG } from '../services/GoogleAuthConfig';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -28,6 +29,8 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
 
   // Google OAuth Setup - Simplified for Expo
   const [request, response, promptAsync] = Google.useAuthRequest({
@@ -132,6 +135,38 @@ export default function LoginScreen() {
     Alert.alert('Thông báo', 'Tính năng đăng nhập Facebook đang được phát triển.\n\nĐể hoàn thành, cần:\n1. Cấu hình Facebook App\n2. Thêm Facebook SDK');
   };
 
+  const handleForgotPassword = () => {
+    setResetEmail(email); // Pre-fill với email đã nhập
+    setShowForgotPasswordModal(true);
+  };
+
+  const handleSendResetEmail = async () => {
+    const trimmedEmail = resetEmail.trim();
+    if (!trimmedEmail) {
+      Alert.alert('Lỗi', 'Vui lòng nhập email');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const result = await resetPassword(trimmedEmail);
+      if (result.success) {
+        Alert.alert(
+          'Thành công',
+          'Email reset mật khẩu đã được gửi. Vui lòng kiểm tra hộp thư của bạn.'
+        );
+        setShowForgotPasswordModal(false);
+        setResetEmail('');
+      } else {
+        Alert.alert('Lỗi', result.message);
+      }
+    } catch (error) {
+      Alert.alert('Lỗi', 'Có lỗi xảy ra. Vui lòng thử lại.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
 
   return (
     <KeyboardAvoidingView
@@ -192,7 +227,10 @@ export default function LoginScreen() {
             </View>
           </View>
 
-          <TouchableOpacity style={styles.forgotPasswordContainer}>
+          <TouchableOpacity
+            style={styles.forgotPasswordContainer}
+            onPress={handleForgotPassword}
+          >
             <Text style={styles.forgotPasswordText}>Quên mật khẩu?</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -241,6 +279,57 @@ export default function LoginScreen() {
 
         </View>
       </ScrollView>
+
+      {/* Forgot Password Modal */}
+      <Modal
+        visible={showForgotPasswordModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowForgotPasswordModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>Quên mật khẩu</Text>
+            <Text style={styles.modalSubtitle}>
+              Nhập email của bạn để nhận link reset mật khẩu
+            </Text>
+
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Nhập địa chỉ email"
+              placeholderTextColor="#A0A0A0"
+              value={resetEmail}
+              onChangeText={setResetEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonCancel]}
+                onPress={() => {
+                  setShowForgotPasswordModal(false);
+                  setResetEmail('');
+                }}
+              >
+                <Text style={styles.modalButtonTextCancel}>Hủy</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonSend]}
+                onPress={handleSendResetEmail}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text style={styles.modalButtonText}>Gửi</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -437,5 +526,74 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#FDB022',
     fontWeight: 'bold',
+  },
+
+  // Forgot Password Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#000000',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: '#666666',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  modalInput: {
+    height: 50,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    fontSize: 15,
+    color: '#000000',
+    backgroundColor: '#FFFFFF',
+    marginBottom: 20,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalButton: {
+    flex: 1,
+    height: 50,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalButtonCancel: {
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  modalButtonSend: {
+    backgroundColor: '#FDB022',
+  },
+  modalButtonTextCancel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666666',
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
   },
 });
