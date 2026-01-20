@@ -481,9 +481,10 @@ export const getTotalAmountByTable = async (tableId) => {
             return { success: false, error: 'Cannot get orders', totalAmount: 0 };
         }
 
-        // Sum all order amounts (excluding cancelled orders)
+        // Sum all order amounts (excluding cancelled AND completed orders)
+        // Only count active orders (pending, preparing, served)
         const totalAmount = orders
-            .filter(order => order.status !== 'cancelled')
+            .filter(order => order.status !== 'cancelled' && order.status !== 'completed')
             .reduce((sum, order) => sum + (order.totalAmount || 0), 0);
 
         return { success: true, totalAmount };

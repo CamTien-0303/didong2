@@ -7,6 +7,7 @@ import {
   reauthenticateWithCredential,
   signInWithCredential,
   signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut,
   updatePassword
 } from "firebase/auth";

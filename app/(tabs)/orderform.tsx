@@ -827,6 +827,9 @@ const styles = StyleSheet.create({
   servedButton: {
     backgroundColor: '#10b981',
   },
+  paymentButton: {
+    backgroundColor: '#8b5cf6', // Purple color for payment
+  },
   cancelButton: {
     backgroundColor: '#ef4444',
   },

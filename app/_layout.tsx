@@ -49,6 +49,13 @@ export default function RootLayout() {
             title: 'Modal'
           }}
         />
+
+        <Stack.Screen
+          name="payment-result"
+          options={{
+            headerShown: false
+          }}
+        />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

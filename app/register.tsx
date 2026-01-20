@@ -106,7 +106,7 @@ export default function RegisterScreen() {
         <View style={styles.formContainer}>
           {/* Display Name */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Tên người dùng</Text>
+            <Text style={styles.label}>Tên</Text>
             <TextInput
               style={styles.input}
               placeholder="Nhập tên người dùng"

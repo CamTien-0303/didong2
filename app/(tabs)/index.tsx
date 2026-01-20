@@ -9,7 +9,7 @@ import {
 } from '@/services/tableService';
 import { useRouter } from 'expo-router';
 import { onAuthStateChanged } from 'firebase/auth';
-import { Bell, Clock, DollarSign, RefreshCw, Users, X } from 'lucide-react-native';
+import { Bell, Clock, CreditCard, DollarSign, RefreshCw, Users, Wallet, X } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -233,12 +233,12 @@ export default function TableMapScreen() {
     setGuestCount('4');
   };
 
-  const handlePayment = async () => {
+  const handleCashPayment = async () => {
     if (!selectedTable) return;
 
     Alert.alert(
-      'Xác nhận thanh toán',
-      `Tổng tiền: ${tableTotalAmount.toLocaleString('vi-VN')}₫\n\nBạn có chắc muốn thanh toán và đóng bàn?`,
+      'Thanh toán tiền mặt',
+      `Tổng tiền: ${tableTotalAmount.toLocaleString('vi-VN')}₫\n\nBạn có chắc muốn thanh toán bằng tiền mặt và đóng bàn?`,
       [
         { text: 'Hủy', style: 'cancel' },
         {
@@ -260,6 +260,94 @@ export default function TableMapScreen() {
         }
       ]
     );
+  };
+
+  const handleQRPayment = async () => {
+    if (!selectedTable) return;
+
+    try {
+      setIsPaymentProcessing(true);
+
+      // Get actual orders from Firebase to calculate correct total
+      const { getAllOrdersByTable } = await import('@/services/orderService');
+      const { success, orders } = await getAllOrdersByTable(selectedTable.id);
+
+      if (!success || !orders || orders.length === 0) {
+        Alert.alert('Lỗi', 'Không tìm thấy đơn hàng cho bàn này');
+        setIsPaymentProcessing(false);
+        return;
+      }
+
+      // Filter active orders - exclude cancelled AND completed (already paid) orders
+      const activeOrders = orders.filter((order: any) =>
+        order.status !== 'cancelled' && order.status !== 'completed'
+      );
+
+      if (activeOrders.length === 0) {
+        Alert.alert('Lỗi', 'Không có đơn hàng để thanh toán');
+        setIsPaymentProcessing(false);
+        return;
+      }
+
+      let allItems: any[] = [];
+      let calculatedTotal = 0;
+
+      activeOrders.forEach((order: any) => {
+        if (order.items && Array.isArray(order.items)) {
+          allItems = [...allItems, ...order.items];
+          const orderTotal = order.items.reduce((sum: number, item: any) => {
+            return sum + ((item.price || 0) * (item.quantity || 0));
+          }, 0);
+          calculatedTotal += orderTotal;
+        }
+      });
+
+      console.log('💰 Payment calculation:', {
+        tableId: selectedTable.id,
+        totalOrders: activeOrders.length,
+        totalItems: allItems.length,
+        calculatedTotal,
+        displayedTotal: tableTotalAmount
+      });
+
+      // Create order object for payment API
+      const orderForPayment = {
+        id: selectedTable.id,
+        tableNumber: selectedTable.number,
+        totalAmount: Math.round(calculatedTotal),
+        items: allItems
+      };
+
+      // Call PayOS API to create payment link
+      const { createPaymentLink } = await import('@/services/paymentService');
+      const result = await createPaymentLink(orderForPayment);
+
+      if (result.success && result.data?.checkoutUrl) {
+        // Close modal first
+        closeTableDetail();
+
+        // Open PayOS checkout URL in browser
+        const { Linking } = await import('react-native');
+        const canOpen = await Linking.canOpenURL(result.data.checkoutUrl);
+
+        if (canOpen) {
+          await Linking.openURL(result.data.checkoutUrl);
+          Alert.alert(
+            'Đang chuyển đến trang thanh toán',
+            `Tổng tiền: ${orderForPayment.totalAmount.toLocaleString('vi-VN')}₫\n\nVui lòng hoàn tất thanh toán trong trình duyệt.`
+          );
+        } else {
+          Alert.alert('Lỗi', 'Không thể mở link thanh toán');
+        }
+      } else {
+        Alert.alert('Lỗi', result.error || 'Không thể tạo link thanh toán');
+      }
+    } catch (error: any) {
+      console.error('Error opening payment:', error);
+      Alert.alert('Lỗi', error.message || 'Có lỗi xảy ra');
+    } finally {
+      setIsPaymentProcessing(false);
+    }
   };
 
   const renderTableCard = ({ item }: { item: Table }) => {
@@ -507,17 +595,31 @@ export default function TableMapScreen() {
                 </View>
 
                 {selectedTable.status === 'DA_PHUC_VU' ? (
-                  <TouchableOpacity
-                    style={[styles.openButton, { backgroundColor: '#10b981' }]}
-                    onPress={handlePayment}
-                    disabled={isPaymentProcessing}
-                  >
-                    {isPaymentProcessing ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <Text style={styles.openButtonText}>Thanh toán</Text>
-                    )}
-                  </TouchableOpacity>
+                  <View style={styles.paymentButtonsContainer}>
+                    <TouchableOpacity
+                      style={[styles.paymentButton, styles.cashButton]}
+                      onPress={handleCashPayment}
+                      disabled={isPaymentProcessing}
+                    >
+                      {isPaymentProcessing ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                      ) : (
+                        <>
+                          <Wallet size={20} color="#fff" />
+                          <Text style={styles.paymentButtonText}>Tiền mặt</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.paymentButton, styles.qrButton]}
+                      onPress={handleQRPayment}
+                      disabled={isPaymentProcessing}
+                    >
+                      <CreditCard size={20} color="#fff" />
+                      <Text style={styles.paymentButtonText}>Thanh toán QR</Text>
+                    </TouchableOpacity>
+                  </View>
                 ) : (
                   <TouchableOpacity
                     style={styles.openButton}
@@ -890,6 +992,33 @@ const styles = StyleSheet.create({
   openButtonText: {
     fontSize: 16,
     fontWeight: 'bold',
+    color: '#fff',
+  },
+
+  // Payment buttons
+  paymentButtonsContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  paymentButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+  },
+  cashButton: {
+    backgroundColor: '#10b981',
+  },
+  qrButton: {
+    backgroundColor: '#8b5cf6',
+  },
+  paymentButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#fff',
   },
 
