@@ -205,7 +205,7 @@ export default function SettingsScreen() {
                   <Sun size={20} color={colors.textSecondary} />
                 )}
                 <Text style={[styles.menuItemText, { color: colors.text }]}>
-                  {isDarkMode ? 'Chế độ tối' : 'Chế độ sáng'}
+                  {isDarkMode ? 'Tối' : 'Sáng'}
                 </Text>
               </View>
               <Switch
