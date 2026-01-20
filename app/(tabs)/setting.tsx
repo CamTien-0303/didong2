@@ -100,7 +100,7 @@ export default function SettingsScreen() {
         <SettingsIcon size={32} color={colors.primary} />
         <Text style={[styles.title, { color: colors.text }]}>Cài đặt</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          Smart Order Management System
+          Hệ thống quản lý gọi món thông minh
         </Text>
       </View>
 
