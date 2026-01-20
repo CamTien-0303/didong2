@@ -67,6 +67,7 @@ export default function TableMapScreen() {
   const [guestCount, setGuestCount] = useState('4');
   const [tableTotalAmount, setTableTotalAmount] = useState(0);
   const [isPaymentProcessing, setIsPaymentProcessing] = useState(false);
+  const [isQRPaymentProcessing, setIsQRPaymentProcessing] = useState(false);
 
   useEffect(() => {
     getUserInfo();
@@ -266,7 +267,7 @@ export default function TableMapScreen() {
     if (!selectedTable) return;
 
     try {
-      setIsPaymentProcessing(true);
+      setIsQRPaymentProcessing(true);
 
       // Get actual orders from Firebase to calculate correct total
       const { getAllOrdersByTable } = await import('@/services/orderService');
@@ -274,7 +275,7 @@ export default function TableMapScreen() {
 
       if (!success || !orders || orders.length === 0) {
         Alert.alert('Lỗi', 'Không tìm thấy đơn hàng cho bàn này');
-        setIsPaymentProcessing(false);
+        setIsQRPaymentProcessing(false);
         return;
       }
 
@@ -285,7 +286,7 @@ export default function TableMapScreen() {
 
       if (activeOrders.length === 0) {
         Alert.alert('Lỗi', 'Không có đơn hàng để thanh toán');
-        setIsPaymentProcessing(false);
+        setIsQRPaymentProcessing(false);
         return;
       }
 
@@ -346,7 +347,7 @@ export default function TableMapScreen() {
       console.error('Error opening payment:', error);
       Alert.alert('Lỗi', error.message || 'Có lỗi xảy ra');
     } finally {
-      setIsPaymentProcessing(false);
+      setIsQRPaymentProcessing(false);
     }
   };
 
@@ -599,7 +600,7 @@ export default function TableMapScreen() {
                     <TouchableOpacity
                       style={[styles.paymentButton, styles.cashButton]}
                       onPress={handleCashPayment}
-                      disabled={isPaymentProcessing}
+                      disabled={isPaymentProcessing || isQRPaymentProcessing}
                     >
                       {isPaymentProcessing ? (
                         <ActivityIndicator color="#fff" size="small" />
@@ -614,10 +615,16 @@ export default function TableMapScreen() {
                     <TouchableOpacity
                       style={[styles.paymentButton, styles.qrButton]}
                       onPress={handleQRPayment}
-                      disabled={isPaymentProcessing}
+                      disabled={isPaymentProcessing || isQRPaymentProcessing}
                     >
-                      <CreditCard size={20} color="#fff" />
-                      <Text style={styles.paymentButtonText}>Thanh toán QR</Text>
+                      {isQRPaymentProcessing ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                      ) : (
+                        <>
+                          <CreditCard size={20} color="#fff" />
+                          <Text style={styles.paymentButtonText}>Thanh toán QR</Text>
+                        </>
+                      )}
                     </TouchableOpacity>
                   </View>
                 ) : (
