@@ -137,7 +137,7 @@ export default function TableMapScreen() {
 
   const refreshTables = () => {
     // Firestore auto-updates via listener, just show feedback
-    Alert.alert('Đã làm mới', 'Dữ liệu đang được đồng bộ realtime');
+    Alert.alert('Đã được làm mới', 'Dữ liệu đang được đồng bộ realtime');
     setIsConnected(true);
   };
 
