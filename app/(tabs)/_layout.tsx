@@ -1,6 +1,7 @@
 import { auth } from '@/services/firebaseConfig';
 import { Redirect, Tabs, useRouter } from 'expo-router';
 import { onAuthStateChanged, User } from 'firebase/auth';
+import { Utensils } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
@@ -56,7 +57,7 @@ export default function TabLayout() {
           name="menu"
           options={{
             title: 'Menu',
-            tabBarIcon: ({ color }) => <IconSymbol size={28} name="sparkles" color={color} />,
+            tabBarIcon: ({ color }) => <Utensils size={24} color={color} />,
           }}
         />
         <Tabs.Screen
